@@ -1,0 +1,19 @@
+# ESP32 Partition Table (4MB Flash) - No SPIFFS
+# Optimized for OTA Updates with SD Card Storage
+#
+# Flash Size: 4MB (4,194,304 bytes = 0x400000)
+# 
+# Memory Layout:
+# - Bootloader:  0x1000  (4KB)
+# - Partition:   0x8000  (32KB)
+# - Total App:   ~3.9MB  (for both OTA partitions)
+# - NVS:         20KB    (WiFi, settings)
+# - Others:      ~80KB   (OTA data, coredump)
+# - SPIFFS:      REMOVED (using SD Card instead)
+
+# Name,       Type, SubType,  Offset,   Size,  
+nvs,          data, nvs,      0x9000,   0x5000,    
+otadata,      data, ota,      0xe000,   0x2000,    
+app0,         app,  ota_0,    0x10000,  0x1F0000,  
+app1,         app,  ota_1,    0x200000, 0x1F0000,  
+coredump,     data, coredump, 0x3F0000, 0x10000,  

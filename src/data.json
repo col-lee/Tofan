@@ -1,0 +1,127 @@
+[
+    {
+        "ssid": "DIRECT-rJMEECHAImsRd",
+        "rssi": -49,
+        "secure": "true"
+    },
+    {
+        "ssid": "iPhone",
+        "rssi": -73,
+        "secure": "true"
+    },
+    {
+        "ssid": "Mm",
+        "rssi": -76,
+        "secure": "true"
+    },
+    {
+        "ssid": "Addy_9051",
+        "rssi": -80,
+        "secure": "true"
+    },
+    {
+        "ssid": "Xiaomi 13 Pro",
+        "rssi": -82,
+        "secure": "true"
+    },
+    {
+        "ssid": "ironman2882",
+        "rssi": -83,
+        "secure": "true"
+    },
+    {
+        "ssid": "ยุ่ง",
+        "rssi": -85,
+        "secure": "true"
+    },
+    {
+        "ssid": "HomeK",
+        "rssi": -85,
+        "secure": "true"
+    },
+    {
+        "ssid": "BallJune_2.4GHz",
+        "rssi": -86,
+        "secure": "true"
+    },
+    {
+        "ssid": "SIT@Wifi",
+        "rssi": -87,
+        "secure": "false"
+    },
+    {
+        "ssid": "Galaxy A040646",
+        "rssi": -88,
+        "secure": "true"
+    },
+    {
+        "ssid": "ADD",
+        "rssi": -89,
+        "secure": "true"
+    },
+    {
+        "ssid": "PONGKK_2.4G",
+        "rssi": -90,
+        "secure": "true"
+    },
+    {
+        "ssid": "SIT@Wifi",
+        "rssi": -91,
+        "secure": "false"
+    },
+    {
+        "ssid": "vivo Y28",
+        "rssi": -91,
+        "secure": "true"
+    },
+    {
+        "ssid": "SIT@Wifi",
+        "rssi": -92,
+        "secure": "false"
+    },
+    {
+        "ssid": "ironman",
+        "rssi": -92,
+        "secure": "true"
+    },
+    {
+        "ssid": "SIN_2.4G",
+        "rssi": -92,
+        "secure": "true"
+    },
+    {
+        "ssid": "Fahnut007_2.4iot",
+        "rssi": -93,
+        "secure": "true"
+    },
+    {
+        "ssid": "SIT@Wifi",
+        "rssi": -93,
+        "secure": "false"
+    },
+    {
+        "ssid": "Yushi_AC68",
+        "rssi": -93,
+        "secure": "true"
+    },
+    {
+        "ssid": "TrueGigatexFiber_2.4G_4BA",
+        "rssi": -93,
+        "secure": "true"
+    },
+    {
+        "ssid": "SIT@Wifi",
+        "rssi": -94,
+        "secure": "false"
+    },
+    {
+        "ssid": "SIT@Wifi",
+        "rssi": -94,
+        "secure": "false"
+    },
+    {
+        "ssid": "FirezillaDe4thG",
+        "rssi": -95,
+        "secure": "true"
+    }
+]
