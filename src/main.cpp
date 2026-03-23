@@ -28,8 +28,33 @@ QueueHandle_t api_event_queue = NULL;
 TaskHandle_t runnet;
 NetworkManager nm;
 
-#define INPUT_SWITCH 19
+#define INPUT_SWITCH 32
+// #define LED 32
 int state = 0;
+
+#define CLK_PIN 34 // Input Only
+#define DT_PIN 35  // Input Only
+#define SW_PIN 21  // ปลอดภัย มี Pull-up
+ 
+int lastEncoderValue = 50;
+
+void IRAM_ATTR readEncoderISR() {
+  static unsigned long lastInterruptTime = 0;
+  unsigned long interruptTime = millis();
+
+  // Debounce 5ms
+  if (interruptTime - lastInterruptTime > 5) {
+    // เช็คทิศทาง
+    if (digitalRead(CLK_PIN) != digitalRead(DT_PIN)) {
+      encoderValue++;
+      if (encoderValue > 100) encoderValue = 100;
+    } else {
+      encoderValue--;
+      if (encoderValue < 0) encoderValue = 0;
+    }
+  }
+  lastInterruptTime = interruptTime;
+}
 
 void setup() {
   Serial.begin(115200);
@@ -39,8 +64,19 @@ void setup() {
   Serial.println("#  ESP32 System v2.0        #");
   Serial.println("#############################\n");
 
-  pinMode(LEVEL_READ, INPUT);
+  pinMode(CLK_PIN, INPUT);
+  pinMode(DT_PIN, INPUT);
+  
+  // ขา 21 สั่ง PULLUP ได้ปกติ
+  pinMode(SW_PIN, INPUT_PULLUP);
+
+  // ผูก Interrupt
+  attachInterrupt(digitalPinToInterrupt(CLK_PIN), readEncoderISR, CHANGE);
+
+  // pinMode(LEVEL_READ, INPUT);
   pinMode(INPUT_SWITCH, INPUT);
+
+  // pinMode(LED, OUTPUT);
 
   sdSemaphore = xSemaphoreCreateMutex();
   displaySemaphore = xSemaphoreCreateMutex();
@@ -115,8 +151,14 @@ void setup() {
 }
 
 void loop() {
-    // state = digitalRead(INPUT_SWITCH);
-    // Serial.println(state);
-    Serial.printf("Freeheap: %lu\n", ESP.getFreeHeap());
-    vTaskDelay(1000);
+    state = digitalRead(INPUT_SWITCH);
+    Serial.println(state);
+
+    if (encoderValue != lastEncoderValue) {
+      Serial.printf("Volume: %d\n", encoderValue);
+      lastEncoderValue = encoderValue;
+    }
+
+    // Serial.printf("Freeheap: %lu\n", ESP.getFreeHeap());
+    vTaskDelay(100);
 }

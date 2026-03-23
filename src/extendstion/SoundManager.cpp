@@ -5,6 +5,8 @@
 Audio audio;
 bool isAudio_install;
 
+volatile int encoderValue = 50;
+
 void initAudio(){
   Serial.printf("Audio Task started on Core %d\n", xPortGetCoreID());
   audio.setPinout(BLCK_PIN, RLC_PIN, DIN_PIN);
@@ -25,11 +27,6 @@ void handleAudio(void *parameter) {
   unsigned long lastAudioLoop = 0;
   const unsigned long VOLUME_UPDATE_INTERVAL = 100;
   const unsigned long AUDIO_LOOP_INTERVAL = 5;  // เรียก audio.loop() ทุก 5ms
-
-  if(xSemaphoreTake(sdSemaphore, pdMS_TO_TICKS(100)) == pdTRUE) {
-    SD.exists(mp3File) ? audio.connecttoFS(SD, mp3File) : Serial.println("File not found.");
-    xSemaphoreGive(sdSemaphore);
-  }
   
   for(;;) {
     unsigned long now = millis();
@@ -89,7 +86,7 @@ void handleAudio(void *parameter) {
       
       // Volume control
       if (now - lastVolumeUpdate >= VOLUME_UPDATE_INTERVAL) {
-        int newVolume = map(analogRead(LEVEL_READ), 0, 4095, 0, 20);
+        int newVolume = encoderValue;
         if (abs(newVolume - volume) >= 1) {
           volume = newVolume;
           audio.setVolume(volume);
