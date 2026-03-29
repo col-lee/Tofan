@@ -4,7 +4,7 @@
 
 TFT_eSPI tft = TFT_eSPI();
 TFT_eSprite txtDis = TFT_eSprite(&tft);
-AnimatedGIF gif;
+// AnimatedGIF gif;
 DisplayManager DISM;
 
 const char *giphy = "/main/Pictures/giphy2.gif";
@@ -16,7 +16,6 @@ static int xOffset = 0;
 static int yOffset = 0;
 
 int offsetY_of_scroll = 0;
-
 bool isDisplay_install;
 
 DisplayManager::DisplayManager() {
@@ -52,47 +51,6 @@ void DisplayManager::resetDisplay(){
     tft.setCursor(0, 0);
     xSemaphoreGive(displaySemaphore);
   }
-}
-
-void handleDisplay(void *pvParameters) {
-  DISPLAY_COMMAND cmd;
-  enum STATE {IDLE, SHOW, CLEAR} state;
-  
-  for (;;) {
-    if(xQueueReceive(display_command, &cmd, 10) == pdPASS) {
-      if(cmd.module == DISPLAY_COMMAND::MODULE::DIS) {
-        if(cmd.display_state == DISPLAY_COMMAND::DISPLAY_STATE::SHOW) {
-          state = STATE::SHOW;
-          Serial.println("SHOW OK.");
-        }
-
-        if(cmd.display_state == DISPLAY_COMMAND::DISPLAY_STATE::CLEAR) {
-          state = STATE::CLEAR;
-          Serial.println("CLEAR OK.");
-        }
-      }
-    }
-
-    switch (state) {
-    case STATE::SHOW:
-      DISM.drawJpeg("/main/Pictures/test.jpg", 0, 40);
-      state = STATE::IDLE;
-      vTaskDelay(pdMS_TO_TICKS(10));
-      break;
-    case STATE::CLEAR:
-      DISM.resetDisplay();
-      // tft_g.println("Hello world");
-      state = STATE::IDLE;
-      vTaskDelay(pdMS_TO_TICKS(10));
-      break;
-    
-    default:
-      vTaskDelay(pdMS_TO_TICKS(50));
-      break;
-    } 
-  }
-
-  vTaskDelay(pdMS_TO_TICKS(1));
 }
 
 void println(String &text) {
@@ -145,134 +103,134 @@ void println(const double &text) {
 
 
 
-static void * GIFOpenFile(const char *fname, int32_t *pSize) {
-  if(xSemaphoreTake(sdSemaphore, pdMS_TO_TICKS(500)) == pdTRUE) {
-    File *f = new File(SD.open(fname));
-    if (f && f->available())
-    {
-      *pSize = f->size();
-      xSemaphoreGive(sdSemaphore);
-      return (void *)f;
-    }
-    xSemaphoreGive(sdSemaphore);
-    delete f;
-  }
+// static void * GIFOpenFile(const char *fname, int32_t *pSize) {
+//   if(xSemaphoreTake(sdSemaphore, pdMS_TO_TICKS(500)) == pdTRUE) {
+//     File *f = new File(SD.open(fname));
+//     if (f && f->available())
+//     {
+//       *pSize = f->size();
+//       xSemaphoreGive(sdSemaphore);
+//       return (void *)f;
+//     }
+//     xSemaphoreGive(sdSemaphore);
+//     delete f;
+//   }
   
-  return nullptr;
-}
+//   return nullptr;
+// }
 
-static void GIFCloseFile(void *pHandle) {
-  File *f = static_cast<File *>(pHandle);
-  if (f)
-  {
-    f->close();
-    delete f;
-  }
-}
+// static void GIFCloseFile(void *pHandle) {
+//   File *f = static_cast<File *>(pHandle);
+//   if (f)
+//   {
+//     f->close();
+//     delete f;
+//   }
+// }
 
-static int32_t GIFReadFile(GIFFILE *pFile, uint8_t *pBuf, int32_t iLen)
-{
-  int32_t iBytesRead;
-  iBytesRead = iLen;
-  File *f = static_cast<File *>(pFile->fHandle);
-  // Note: If you read a file all the way to the last byte, seek() stops working
-  if ((pFile->iSize - pFile->iPos) < iLen)
-    iBytesRead = pFile->iSize - pFile->iPos - 1; // <-- ugly work-around
-  if (iBytesRead <= 0)
-    return 0;
-  iBytesRead = (int32_t)f->read(pBuf, iBytesRead);
-  pFile->iPos = f->position();
+// static int32_t GIFReadFile(GIFFILE *pFile, uint8_t *pBuf, int32_t iLen)
+// {
+//   int32_t iBytesRead;
+//   iBytesRead = iLen;
+//   File *f = static_cast<File *>(pFile->fHandle);
+//   // Note: If you read a file all the way to the last byte, seek() stops working
+//   if ((pFile->iSize - pFile->iPos) < iLen)
+//     iBytesRead = pFile->iSize - pFile->iPos - 1; // <-- ugly work-around
+//   if (iBytesRead <= 0)
+//     return 0;
+//   iBytesRead = (int32_t)f->read(pBuf, iBytesRead);
+//   pFile->iPos = f->position();
 
-  return iBytesRead;
-}
+//   return iBytesRead;
+// }
 
-static int32_t GIFSeekFile(GIFFILE *pFile, int32_t iPosition)
-{
-  int i = micros();
-  File *f = static_cast<File *>(pFile->fHandle);
-  f->seek(iPosition);
-  pFile->iPos = (int32_t)f->position();
-  i = micros() - i;
-  // log_d("Seek time = %d us\n", i);
+// static int32_t GIFSeekFile(GIFFILE *pFile, int32_t iPosition)
+// {
+//   int i = micros();
+//   File *f = static_cast<File *>(pFile->fHandle);
+//   f->seek(iPosition);
+//   pFile->iPos = (int32_t)f->position();
+//   i = micros() - i;
+//   // log_d("Seek time = %d us\n", i);
 
-  return pFile->iPos;
-}
+//   return pFile->iPos;
+// }
 
-static void TFTDraw(int x, int y, int w, int h, uint16_t* lBuf )
-{
-  if (xSemaphoreTake(displaySemaphore ,pdMS_TO_TICKS(200)) == pdTRUE)
-  {
-    tft.pushRect(x + xOffset, y + yOffset, w, h, lBuf);
-    xSemaphoreGive(displaySemaphore);
-  }
-}
+// static void TFTDraw(int x, int y, int w, int h, uint16_t* lBuf )
+// {
+//   if (xSemaphoreTake(displaySemaphore ,pdMS_TO_TICKS(200)) == pdTRUE)
+//   {
+//     tft.pushRect(x + xOffset, y + yOffset, w, h, lBuf);
+//     xSemaphoreGive(displaySemaphore);
+//   }
+// }
 
-void GIFDraw(GIFDRAW *pDraw)
-{
-  uint8_t *s;
-  uint16_t *d, *usPalette, usTemp[320];
-  int x, y, iWidth;
+// void GIFDraw(GIFDRAW *pDraw)
+// {
+//   uint8_t *s;
+//   uint16_t *d, *usPalette, usTemp[320];
+//   int x, y, iWidth;
 
-  iWidth = pDraw->iWidth;
-  if (iWidth > TFT_WIDTH)
-      iWidth = TFT_WIDTH;
-  usPalette = pDraw->pPalette;
-  y = pDraw->iY + pDraw->y; // current line
+//   iWidth = pDraw->iWidth;
+//   if (iWidth > TFT_WIDTH)
+//       iWidth = TFT_WIDTH;
+//   usPalette = pDraw->pPalette;
+//   y = pDraw->iY + pDraw->y; // current line
 
-  s = pDraw->pPixels;
-  if (pDraw->ucDisposalMethod == 2) {// restore to background color
-    for (x=0; x<iWidth; x++) {
-      if (s[x] == pDraw->ucTransparent)
-          s[x] = pDraw->ucBackground;
-    }
-    pDraw->ucHasTransparency = 0;
-  }
-  // Apply the new pixels to the main image
-  if (pDraw->ucHasTransparency) { // if transparency used
-    uint8_t *pEnd, c, ucTransparent = pDraw->ucTransparent;
-    int x, iCount;
-    pEnd = s + iWidth;
-    x = 0;
-    iCount = 0; // count non-transparent pixels
-    while(x < iWidth) {
-      c = ucTransparent-1;
-      d = usTemp;
-      while (c != ucTransparent && s < pEnd) {
-        c = *s++;
-        if (c == ucTransparent) { // done, stop
-          s--; // back up to treat it like transparent
-        } else { // opaque
-            *d++ = usPalette[c];
-            iCount++;
-        }
-      } // while looking for opaque pixels
-      if (iCount) { // any opaque pixels?
-        TFTDraw( pDraw->iX+x, y, iCount, 1, (uint16_t*)usTemp );
-        x += iCount;
-        iCount = 0;
-      }
-      // no, look for a run of transparent pixels
-      c = ucTransparent;
-      while (c == ucTransparent && s < pEnd) {
-        c = *s++;
-        if (c == ucTransparent)
-            iCount++;
-        else
-            s--;
-      }
-      if (iCount) {
-        x += iCount; // skip these
-        iCount = 0;
-      }
-    }
-  } else {
-    s = pDraw->pPixels;
-    // Translate the 8-bit pixels through the RGB565 palette (already byte reversed)
-    for (x=0; x<iWidth; x++)
-      usTemp[x] = usPalette[*s++];
-    TFTDraw( pDraw->iX, y, iWidth, 1, (uint16_t*)usTemp );
-  }
-}
+//   s = pDraw->pPixels;
+//   if (pDraw->ucDisposalMethod == 2) {// restore to background color
+//     for (x=0; x<iWidth; x++) {
+//       if (s[x] == pDraw->ucTransparent)
+//           s[x] = pDraw->ucBackground;
+//     }
+//     pDraw->ucHasTransparency = 0;
+//   }
+//   // Apply the new pixels to the main image
+//   if (pDraw->ucHasTransparency) { // if transparency used
+//     uint8_t *pEnd, c, ucTransparent = pDraw->ucTransparent;
+//     int x, iCount;
+//     pEnd = s + iWidth;
+//     x = 0;
+//     iCount = 0; // count non-transparent pixels
+//     while(x < iWidth) {
+//       c = ucTransparent-1;
+//       d = usTemp;
+//       while (c != ucTransparent && s < pEnd) {
+//         c = *s++;
+//         if (c == ucTransparent) { // done, stop
+//           s--; // back up to treat it like transparent
+//         } else { // opaque
+//             *d++ = usPalette[c];
+//             iCount++;
+//         }
+//       } // while looking for opaque pixels
+//       if (iCount) { // any opaque pixels?
+//         TFTDraw( pDraw->iX+x, y, iCount, 1, (uint16_t*)usTemp );
+//         x += iCount;
+//         iCount = 0;
+//       }
+//       // no, look for a run of transparent pixels
+//       c = ucTransparent;
+//       while (c == ucTransparent && s < pEnd) {
+//         c = *s++;
+//         if (c == ucTransparent)
+//             iCount++;
+//         else
+//             s--;
+//       }
+//       if (iCount) {
+//         x += iCount; // skip these
+//         iCount = 0;
+//       }
+//     }
+//   } else {
+//     s = pDraw->pPixels;
+//     // Translate the 8-bit pixels through the RGB565 palette (already byte reversed)
+//     for (x=0; x<iWidth; x++)
+//       usTemp[x] = usPalette[*s++];
+//     TFTDraw( pDraw->iX, y, iWidth, 1, (uint16_t*)usTemp );
+//   }
+// }
 
 void DisplayManager::createArray(const char *filename) {
 
@@ -454,3 +412,166 @@ void DisplayManager::drawJpeg(const char *filename, int xpos, int ypos) {
      xSemaphoreGive(sdSemaphore);
    }
 }
+
+PNG png;             // 🌟 ต้องมีตัวแปรนี้สำหรับเรียกใช้ Library PNGdec
+int png_x = 0;       // 🌟 ตำแหน่งแกน X 
+int png_y = 0;
+File pngFile;
+static uint16_t lineBuffer[480];
+
+void * pngOpen(const char *filename, int32_t *size) {
+  pngFile = SD.open(filename, FILE_READ);
+  if (pngFile) {
+    *size = pngFile.size();
+    return (void *)&pngFile;
+  }
+  return NULL;
+}
+
+void pngClose(void *handle) {
+  if (pngFile) {
+      pngFile.close();
+  }
+}
+
+int32_t pngRead(PNGFILE *page, uint8_t *buffer, int32_t length) {
+  if (!pngFile) return 0;
+  return pngFile.read(buffer, length);
+}
+
+int32_t pngSeek(PNGFILE *page, int32_t position) {
+  if (!pngFile) return 0;
+  if (pngFile.seek(position)) {
+      return position; // ต้องคืนค่า position กลับไปถ้าเลื่อนไฟล์สำเร็จ
+  }
+  return 0;
+}
+
+// Callback สำหรับดันพิกเซล PNG ลงจอ TFT ทีละบรรทัด
+int pngDraw(PNGDRAW *pDraw) {
+    // 🚨 1. ป้องกัน Buffer Overflow เด็ดขาด (สาเหตุหลักที่ทำให้เครื่องค้าง)
+    int drawWidth = pDraw->iWidth;
+    if (drawWidth > 480) {
+        drawWidth = 480; 
+    }
+
+    // แปลงสีเป็น RGB565 (สำหรับจอ TFT)
+    png.getLineAsRGB565(pDraw, lineBuffer, PNG_RGB565_LITTLE_ENDIAN, 0xffffffff);
+    
+    // ดันภาพลงจอ (ตรวจสอบขอบเขตขอบจอด้วย)
+    if (png_x + drawWidth <= tft.width() && (png_y + pDraw->y) < tft.height()) {
+        tft.pushImage(png_x, png_y + pDraw->y, drawWidth, 1, lineBuffer);
+    }
+    
+    // 🚨 2. ป้องกัน Watchdog Timer รีเซ็ตเครื่อง
+    // ยอมให้ Task พัก 1 มิลลิวินาที ทุกๆ การวาด 8 บรรทัด เพื่อให้ CPU หายใจ
+    if (pDraw->y % 8 == 0) {
+        vTaskDelay(pdMS_TO_TICKS(1)); 
+    }
+    
+    return 1; // คืนค่า 1 เพื่อบอกว่าวาดบรรทัดนี้สำเร็จ
+}
+
+// ==========================================
+// ฟังก์ชันสั่งวาด PNG
+// ==========================================
+void DisplayManager::drawPng(const char *filename, int xpos, int ypos) {
+    if (xSemaphoreTake(sdSemaphore, pdMS_TO_TICKS(2000)) == pdTRUE) {
+        if (xSemaphoreTake(displaySemaphore, pdMS_TO_TICKS(2000)) == pdTRUE) {
+            png_x = xpos;
+            png_y = ypos;
+            
+            int rc = png.open(filename, pngOpen, pngClose, pngRead, pngSeek, pngDraw);
+            if (rc == PNG_SUCCESS) {
+                if (png.getWidth() > 480) { 
+                    Serial.println("PNG too wide for buffer!");
+                } else {
+                    tft.startWrite();
+                    // ตรวจสอบการล่มจาก Heap ไม่พอ
+                    int decode_rc = png.decode(NULL, 0); 
+                    if (decode_rc != PNG_SUCCESS) {
+                        Serial.printf("PNG Decode Failed: %d\n", decode_rc);
+                    }
+                    tft.endWrite();
+                }
+                
+                // 🚨 3. สำคัญมาก: ต้องปิดไฟล์เสมอ! ไม่งั้น File Handle จะค้างจนล่ม
+                png.close(); 
+            } else {
+                Serial.printf("PNG Open Error: %d\n", rc);
+                // ปิดไฟล์เผื่อไว้ในกรณีที่ไลบรารีไม่ได้ปิดให้
+                if (pngFile) {
+                    pngFile.close(); 
+                }
+            }
+            xSemaphoreGive(displaySemaphore);
+        }
+        xSemaphoreGive(sdSemaphore);
+    }
+}
+
+void handleDisplay(void *pvParameters) {
+  DISPLAY_COMMAND cmd;
+  // สร้าง enum สำหรับจัดการสถานะ
+  enum class STATE { IDLE, SHOW, CLEAR } state = STATE::IDLE;
+  
+  // ตัวแปรสำหรับเก็บ Path ล่าสุดที่ส่งมาจาก Queue
+  String lastPath = "";
+
+  for (;;) {
+    // 1. รับคำสั่งจาก Queue (Timeout 10ms)
+    if(xQueueReceive(display_command, &cmd, 10) == pdPASS) {
+      if(cmd.module == DISPLAY_COMMAND::MODULE::DIS) {
+        
+        // สถานะแสดงผลรูปภาพ
+        if(cmd.display_state == DISPLAY_COMMAND::DISPLAY_STATE::SHOW) {
+          lastPath = cmd.path; // เก็บ path ไว้ใช้ใน switch-case
+          state = STATE::SHOW;
+          Serial.println("SHOW OK. Path: " + lastPath);
+        }
+
+        // สถานะล้างหน้าจอ
+        if(cmd.display_state == DISPLAY_COMMAND::DISPLAY_STATE::CLEAR) {
+          state = STATE::CLEAR;
+          Serial.println("CLEAR OK.");
+        }
+      }
+    }
+
+    // 2. จัดการการแสดงผลตาม State ที่ได้รับ
+    switch (state) {
+    case STATE::SHOW:
+      if (lastPath != "") {
+        String pathLower = lastPath;
+        DISM.resetDisplay();
+        // แยกการวาดตามนามสกุลไฟล์
+        if (pathLower.endsWith(".jpg") || pathLower.endsWith(".jpeg")) {
+            DISM.drawJpeg(lastPath.c_str(), 0, 40);
+        } 
+        else if (pathLower.endsWith(".png")) {
+            // DISM.drawPng(lastPath.c_str(), 0, 40);
+        }
+      }
+      
+      state = STATE::IDLE; // ทำเสร็จแล้วกลับไปสถานะรอ
+      vTaskDelay(pdMS_TO_TICKS(10));
+      break;
+
+    case STATE::CLEAR:
+      // ใช้ฟังก์ชันที่มีอยู่ใน DisplayManager
+      DISM.resetDisplay(); 
+      
+      state = STATE::IDLE; // ทำเสร็จแล้วกลับไปสถานะรอ
+      vTaskDelay(pdMS_TO_TICKS(10));
+      break;
+    
+    default:
+      // สถานะ IDLE รอรับคำสั่งใหม่
+      vTaskDelay(pdMS_TO_TICKS(50));
+      break;
+    } 
+  }
+
+  vTaskDelay(pdMS_TO_TICKS(1));
+}
+

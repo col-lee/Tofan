@@ -47,14 +47,6 @@
     #include <ArduinoJson.h>
 #endif
 
-#define jsonData
-#if defined (jsonData)
-    extern String jsondata;
-    // extern String jsondataFolder;
-    // extern String jsondataFile;
-#endif
-
-
 #ifndef IS_INSTALLATION
 #define IS_INSTALLATION
     extern bool isNetwork_install;

@@ -256,35 +256,101 @@ void NetworkManager::handleWebSocketMessage(void *arg, uint8_t *data, size_t len
     Serial.println("Received: " + String(module) +  String(state));
     
     switch (module) {
-    case DISPLAY_COMMAND::DIS:
+    // ตรวจสอบว่าคุณตั้ง case เป็นอะไร (ปกติจะเป็น case 0: หรือ case DISPLAY_COMMAND::DIS:)
+    case DISPLAY_COMMAND::DIS: 
+    {
       dcmd.module = DISPLAY_COMMAND::MODULE::DIS;
-      if(state == DISPLAY_COMMAND::DISPLAY_STATE::SHOW) {
-        dcmd.display_state = DISPLAY_COMMAND::DISPLAY_STATE::SHOW;
-        dcmd.path = path;
+      
+      // ดึงค่า filepath ของรูปภาพ
+      if (docs["filepath"].is<String>()) {
+          dcmd.path = docs["filepath"].as<String>();
+      } else {
+          dcmd.path = "";
       }
 
+      if(state == DISPLAY_COMMAND::DISPLAY_STATE::SHOW) dcmd.display_state = DISPLAY_COMMAND::DISPLAY_STATE::SHOW;
       if(state == DISPLAY_COMMAND::DISPLAY_STATE::CLEAR) dcmd.display_state = DISPLAY_COMMAND::DISPLAY_STATE::CLEAR;
+
       if(xQueueSend(display_command, &dcmd, 0) == pdPASS) {
-        Serial.println("send.");
-      } else {
-        Serial.println("Failed to send");
+        Serial.println("Display command sent.");
       }
       vTaskDelay(pdMS_TO_TICKS(100));
       break;
+    }
     case AUDIO_COMMAND::AUDIO:
       acmd.module = AUDIO_COMMAND::MODULE::AUDIO;
+      
+      // ✅ 1. เปลี่ยนการเช็ค key เป็นแบบ v7
+      if (docs["filepath"].is<String>()) {
+          acmd.path = docs["filepath"].as<String>();
+      } else {
+          acmd.path = "";
+      }
+
       if(state == AUDIO_COMMAND::AUDIO_STATE::PLAY) acmd.audio_state = AUDIO_COMMAND::AUDIO_STATE::PLAY;
       if(state == AUDIO_COMMAND::AUDIO_STATE::PUASE) acmd.audio_state = AUDIO_COMMAND::AUDIO_STATE::PUASE;
-      if(state == AUDIO_COMMAND::AUDIO_STATE::STOP) acmd.audio_state = AUDIO_COMMAND::AUDIO_STATE::STOP;
+      
+      // ✅ 2. เปลี่ยนการเช็ค key เป็นแบบ v7
+      if(state == AUDIO_COMMAND::AUDIO_STATE::SEEK) {
+          acmd.audio_state = AUDIO_COMMAND::AUDIO_STATE::SEEK;
+          if (docs["seek_time"].is<int>() || docs["seek_time"].is<uint32_t>()) {
+              acmd.seek_time = docs["seek_time"].as<uint32_t>();
+          }
+      }
+
       if(xQueueSend(audio_command, &acmd, 0) == pdPASS) {
-        Serial.println("send.");
-      } else {
-        Serial.println("Failed to send");
+        Serial.println("Audio command sent successfully.");
       }
       vTaskDelay(pdMS_TO_TICKS(100));
       break;
-    default:
+
+    case 2: // MODULE FILE
+    { 
+      // ดึงค่า filepath และ currentDir อย่างปลอดภัย
+      String filePath = docs["filepath"].is<String>() ? docs["filepath"].as<String>() : "";
+      String currentDir = docs["currentDir"].is<String>() ? docs["currentDir"].as<String>() : "/main";
       
+      if(state == 3) { // 3 = SCAN
+          // 🌟 1. ดึงค่า requester ว่าใครเป็นคนขอแสกน
+          String requester = docs["requester"].is<String>() ? docs["requester"].as<String>() : "file_manager";
+          
+          String jsonList = file_card.getFileListJSON(filePath);
+          
+          // 🌟 2. แกะ JSON เพื่อเปลี่ยน type ให้ตรงกับที่หน้าเว็บรอ
+          JsonDocument doc;
+          deserializeJson(doc, jsonList);
+          
+          if (requester == "image_picker") {
+              doc["type"] = "image_picker_list"; // ส่งให้ Popup เลือกรูป
+          } else {
+              doc["type"] = "file_list"; // ส่งให้ File Manager หลัก
+          }
+          
+          String output;
+          serializeJson(doc, output);
+          websocket.textAll(output); 
+      }
+      else if(state == 0) { // 0 = CREATE FILE (สร้างไฟล์)
+          file_card.createFile(filePath);
+          websocket.textAll(file_card.getFileListJSON(currentDir));
+      }
+      else if(state == 4) { // 🌟 4 = CREATE FOLDER (สร้างโฟลเดอร์) เติมกลับเข้ามาแล้ว!
+          file_card.createFolder(filePath);
+          websocket.textAll(file_card.getFileListJSON(currentDir));
+      }
+      else if(state == 1) { // 1 = RENAME (เปลี่ยนชื่อ)
+          String newPath = docs["newpath"].is<String>() ? docs["newpath"].as<String>() : "";
+          file_card.renameFile(filePath, newPath);
+          websocket.textAll(file_card.getFileListJSON(currentDir));
+      }
+      else if(state == 2) { // 2 = DELETE (ลบไฟล์/โฟลเดอร์)
+          file_card.deleteFile(filePath);
+          websocket.textAll(file_card.getFileListJSON(currentDir));
+      }
+      break;
+    }
+    
+    default:
       break;
     }
   }
@@ -415,9 +481,7 @@ void NetworkManager::initWiFiManager() {
               Serial.println("ssid or password is valid or null.");
             }
 
-            request->send(200, "text/plain", "save ssid and password wifi to memory successfull.");
             vTaskDelay(500);
-            ESP.restart();
           } else {
             request->send(500, "text/plain", "Failed to write to NVM");
           }
@@ -433,37 +497,16 @@ void NetworkManager::initWiFiManager() {
 
 void NetworkManager::initWebServer() {
     if(isConnectSDcard) {
-      server.on("/", HTTP_GET, [](AsyncWebServerRequest *request)
-                { request->send(SD, "/WEB_Source/index.html", "text/html"); });
-      
-      server.on("/controlPanel/", HTTP_GET, [](AsyncWebServerRequest *request)
-                {
-                  // if(prefs.begin("UsernameConfig", true)) {
-                  //   prefs.getString("auth", token, sizeof(token));
-                  //   prefs.end();
-                  //   Serial.println("read data from Preferences successfull.");
-                  // }
+    // 1. หน้าหลัก (ระบุเจาะจง)
+    server.on("/", HTTP_GET, [](AsyncWebServerRequest *request)
+        { request->send(SD, "/WEB_Source/index.html", "text/html"); });
 
-                  request->send(SD, "/WEB_Source/controlPanel.html", "text/html"); 
-                });
+    // 2. หน้า Upload (ระบุเจาะจง)
+    server.on("/pageUploadFile", HTTP_GET, [](AsyncWebServerRequest *request)
+        { request->send(SD, "/WEB_Source/uploadFile.html", "text/html"); });
 
-      server.on("/controlPanel/script.js", HTTP_GET, [](AsyncWebServerRequest *request)
-                { request->send(SD, "/WEB_Source/script.js", "application/javascript"); });
-
-      server.on("/controlPanel/style.css", HTTP_GET, [](AsyncWebServerRequest *request)
-                { request->send(SD, "/WEB_Source/style.css", "text/css"); });
-
-      server.on("/controlPanel/test.jpg", HTTP_GET, [](AsyncWebServerRequest *request)
-                { request->send(SD, "/WEB_Source/file_source/test.jpg", "image/jpeg"); });
-
-      server.on("/controlPanel/arrow-down-solid-full.svg", HTTP_GET, [](AsyncWebServerRequest *request)
-                { request->send(SD, "/WEB_Source/arrow-down-solid-full.svg", "image/svg+xml"); });
-
-      server.on("/pageUploadFile", HTTP_GET, [](AsyncWebServerRequest *request)
-                { request->send(SD, "/WEB_Source/uploadFile.html", "text/html"); });
+    server.serveStatic("/controlPanel/", SD, "/WEB_Source/");
     }
-
-    // API LOGIN
 
     server.on("/api/signin", HTTP_OPTIONS, [](AsyncWebServerRequest *request) {
       AsyncWebServerResponse* response = request->beginResponse(200);
@@ -681,7 +724,7 @@ void NetworkManager::initWebServer() {
     // API GET DATA
 
     server.on("/api/data", HTTP_GET, [](AsyncWebServerRequest *request) {
-      AsyncWebServerResponse *response = request->beginResponse(200, "application/json", jsondata);
+      AsyncWebServerResponse *response = request->beginResponse(200, "application/json", "jsondata");
       response->addHeader("Access-Control-Allow-Origin", "*");
       request->send(response);
     });
@@ -713,7 +756,7 @@ void NetworkManager::initWebServer() {
 
         // xQueueSend(fileMg, &type, 0);
 
-        response = request->beginResponse(200, "application/json", jsondata);
+        response = request->beginResponse(200, "application/json", "jsondata");
         response->addHeader("Access-Control-Allow-Origin", "*");
         request->send(response);
 
@@ -726,6 +769,7 @@ void NetworkManager::initWebServer() {
           uploadState.file.close();
         }
         uploadState.inProgress = false;
+        // xSemaphoreGive(sdSemaphore);
     }
     
     request->send(200, "text/plain", "successfull.");

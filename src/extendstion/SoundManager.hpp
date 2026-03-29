@@ -1,3 +1,6 @@
+#ifndef SOUNDMANAGER_H
+#define SOUNDMANAGER_H
+
 #include <Audio.h>
 #include "GlobalVar.hpp"
 
@@ -11,10 +14,15 @@
     extern volatile int encoderValue;
 #endif
 
-// Volume Pin
-// #define LEVEL_READ 32
-
 extern Audio audio;
+extern bool isAudio_install;
 
 void initAudio();
 void handleAudio(void *parameter);
+
+// ประกาศฟังก์ชัน Callback ของไลบรารี I2S
+void audio_info(const char *info);
+void audio_id3data(const char *info);
+void audio_eof_mp3(const char *info);
+
+#endif

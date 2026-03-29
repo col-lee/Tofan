@@ -27,6 +27,7 @@ QueueHandle_t audio_command = NULL;
 QueueHandle_t api_event_queue = NULL;
 TaskHandle_t runnet;
 NetworkManager nm;
+FileManager file_card;
 
 #define INPUT_SWITCH 32
 // #define LED 32
@@ -112,10 +113,10 @@ void setup() {
     xSemaphoreGive(sdSemaphore);
   }
 
-  BaseType_t task1 = xTaskCreatePinnedToCore(handleAudio, "handleAudio", 4 * 1024, NULL, 3, &t_handleAudio, 1);
+  BaseType_t task1 = xTaskCreatePinnedToCore(handleAudio, "handleAudio", 5 * 1024, NULL, 3, &t_handleAudio, 1);
   BaseType_t netWorkTask = xTaskCreatePinnedToCore(runNet, "runNet", 3 * 1024, NULL, 3, &runnet, tskNO_AFFINITY);
-  BaseType_t disPTask = xTaskCreatePinnedToCore(handleDisplay, "handleDisplay", 3 * 1024, NULL, 2, &t_handleDisplay, 1);
-  if(task1 && netWorkTask && disPTask != pdPASS) {
+  BaseType_t disPTask = xTaskCreatePinnedToCore(handleDisplay, "handleDisplay", 6 * 1024, NULL, 2, &t_handleDisplay, 1);
+  if(task1 && netWorkTask && disPTask!= pdPASS) {
     Serial.println("Create Task Error.");
     if(xSemaphoreTake(displaySemaphore ,pdMS_TO_TICKS(100)) == pdTRUE) {
       tft.setTextColor(TFT_RED);
@@ -136,7 +137,6 @@ void setup() {
 
   Serial.println("Create Task Successfull.");
   Serial.println("System Ready.");
-  file_card.listFileAll();
 
   vTaskDelay(pdMS_TO_TICKS(1000));
 
@@ -149,16 +149,22 @@ void setup() {
     tft.println("error.");
   }
 }
-
+   
 void loop() {
-    state = digitalRead(INPUT_SWITCH);
-    Serial.println(state);
+    // state = digitalRead(INPUT_SWITCH);
+    // Serial.printf("SW_1: %d \n", state);
 
     if (encoderValue != lastEncoderValue) {
       Serial.printf("Volume: %d\n", encoderValue);
       lastEncoderValue = encoderValue;
     }
 
-    // Serial.printf("Freeheap: %lu\n", ESP.getFreeHeap());
+    // if(digitalRead(SW_PIN) == HIGH) {
+    //   Serial.printf("SW_2: %d \n", digitalRead(SW_PIN));
+    // } else {
+    //   Serial.printf("SW_2: %d \n", digitalRead(SW_PIN));
+    // }
+
+    Serial.printf("Freeheap: %lu\n", ESP.getFreeHeap());
     vTaskDelay(100);
 }

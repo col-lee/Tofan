@@ -1,27 +1,28 @@
 #include "FileManager.hpp"
+#include <ArduinoJson.h>
 
-SPIClass hspi(HSPI);
+SPIClass vspi(VSPI);
 SemaphoreHandle_t sdSemaphore;
-FileManager file_card;
 bool isConnectSDcard = false;
-String jsondata;
 bool isFileManager_install;
 
 FileManager::FileManager()
 {
+
 }
 
 FileManager::~FileManager()
 {
+
 }
 
 void FileManager::initSDCard()
 {
     pinMode(CS, OUTPUT);
     digitalWrite(CS, HIGH);
-    hspi.begin(SCL, MISO, MOSI, CS);
-    hspi.setFrequency(8000000);
-    if (SD.begin(CS, hspi, 8000000))
+    vspi.begin(SCL, MISO, MOSI, CS);
+    // vspi.setFrequency(8000000);
+    if (SD.begin(CS, vspi))
     {
         isConnectSDcard = true;
         Serial.println("SD mount card.");
@@ -65,141 +66,103 @@ void FileManager::initSDCard()
     }
 }
 
-void FileManager::scanAll(File dir, int numTabs, JsonArray &jfiarray, JsonArray &jfoarray) {
-    while (true) {
-        File root = dir.openNextFile();
-        if(!root) break;
-        // for (uint8_t i = 0; i < numTabs; i++) {
-        //     Serial.print("  ");
-        // }
-        // Serial.print(root.name());
+// ฟังก์ชันแสกนโฟลเดอร์และแปลงเป็น JSON
+// 1. ฟังก์ชันแสกนโฟลเดอร์
+String FileManager::getFileListJSON(String dirPath) {
+    // 🚨 ล็อกชั้นที่ 1: ถ้าไม่ใช่โฟลเดอร์ /main ให้ปฏิเสธการเข้าถึงทันที
+    if (!dirPath.startsWith("/main")) {
+        return "{\"type\":\"file_list\",\"status\":\"error\",\"msg\":\"Access Denied\"}";
+    }
+
+    if (xSemaphoreTake(sdSemaphore, pdMS_TO_TICKS(1000)) != pdTRUE) {
+        return "{\"type\":\"file_list\",\"status\":\"busy\"}";
+    }
+
+    File dir = SD.open(dirPath);
+    if (!dir || !dir.isDirectory()) {
+        xSemaphoreGive(sdSemaphore);
+        return "{\"type\":\"file_list\",\"path\":\"" + dirPath + "\",\"files\":[]}";
+    }
+
+    JsonDocument doc;
+    doc["type"] = "file_list";
+    doc["path"] = dirPath;
+    JsonArray files = doc["files"].to<JsonArray>();
+
+    File file = dir.openNextFile();
+    while (file) {
+        JsonObject item = files.add<JsonObject>();
+        String fileName = String(file.name());
+        int slashIndex = fileName.lastIndexOf('/');
+        if (slashIndex != -1) fileName = fileName.substring(slashIndex + 1);
+
+        item["name"] = fileName;
+        item["isDir"] = file.isDirectory();
+        item["size"] = file.size();
         
-        if(root.isDirectory()) {
-            JsonObject jObjfolder = jfoarray.add<JsonObject>();
-            jObjfolder["folderName"] = root.name();
-            jObjfolder["folderPath"] = root.path();
-            scanAll(root, numTabs + 1, jfiarray, jfoarray);
+        file = dir.openNextFile();
+    }
+    
+    xSemaphoreGive(sdSemaphore);
+
+    String output;
+    serializeJson(doc, output);
+    return output;
+}
+
+// 2. ฟังก์ชันสร้างไฟล์
+bool FileManager::createFile(String path) {
+    if (!path.startsWith("/main")) return false; // 🚨 บล็อก
+    if (xSemaphoreTake(sdSemaphore, pdMS_TO_TICKS(500)) == pdTRUE) {
+        File f = SD.open(path, FILE_WRITE);
+        if(f) { f.close(); xSemaphoreGive(sdSemaphore); return true; }
+        xSemaphoreGive(sdSemaphore);
+    }
+    return false;
+}
+
+// 3. ฟังก์ชันลบไฟล์
+bool FileManager::deleteFile(String path) {
+    // 🚨 บล็อก และ ห้ามลบโฟลเดอร์ /main ทิ้งเด็ดขาด!
+    if (!path.startsWith("/main") || path == "/main") return false; 
+    
+    if (xSemaphoreTake(sdSemaphore, pdMS_TO_TICKS(500)) == pdTRUE) {
+        bool res;
+        File f = SD.open(path);
+        if(f && f.isDirectory()) {
+            f.close();
+            res = SD.rmdir(path);
         } else {
-            if(root.name()) {
-                JsonObject jObjfile = jfiarray.add<JsonObject>();
-                jObjfile["name"] = root.name();
-                jObjfile["path"] = root.path();
-                jObjfile["size"] = root.size();
-            }
-
-            // Serial.print("\t\t");
-            // Serial.print(root.size(), DEC);
-            // Serial.println(" bytes");
+            f.close();
+            res = SD.remove(path);
         }
-        root.close();
-    }
-}
-
-void FileManager::listFileAll() {
-    if (xSemaphoreTake(sdSemaphore, pdMS_TO_TICKS(100)) == pdTRUE)
-    {
-        JsonDocument doc;
-        doc["root"] = "/";
-        JsonArray files = doc["files"].to<JsonArray>();
-        JsonArray folders = doc["folders"].to<JsonArray>();
-        // String jsondataFolder;
-        // String jsondataFile;
-        // String jsondata;
-        File root = SD.open("/main");
-        if(!root) {
-            return;
-        }
-        scanAll(root, 0, files, folders);
-        root.close();
-        serializeJson(doc, jsondata);
-        Serial.println(jsondata);
         xSemaphoreGive(sdSemaphore);
-        doc.clear();
+        return res;
     }
+    return false;
 }
 
-void FileManager::scanfilterFile(File dir, int numTabs, JsonArray &jfiarray, JsonArray &jfoarray, String exts) {
-    while (true) {
-        File root = dir.openNextFile();
-        if(!root) break;
-        // for (uint8_t i = 0; i < numTabs; i++) {
-        //     Serial.print("  ");
-        // }
-        // Serial.print(root.name());
-        
-        if(root.isDirectory()) {
-            JsonObject jObjfolder = jfoarray.add<JsonObject>();
-            jObjfolder["folderName"] = root.name();
-            jObjfolder["folderPath"] = root.path();
-            scanfilterFile(root, numTabs + 1, jfiarray, jfoarray, exts);
-        } else {
-            if(root.name()) {
-                String extendsion = root.name();
-                extendsion.toLowerCase();
-                if(extendsion.endsWith(".jpg") || extendsion.endsWith(".jpeg") || extendsion.endsWith(".png") && exts.equals("images")) {
-                    JsonObject jObjfile = jfiarray.add<JsonObject>();
-                    jObjfile["name"] = root.name();
-                    jObjfile["path"] = root.path();
-                    jObjfile["size"] = root.size();
-                } else if(extendsion.endsWith(".gif") && exts.equals("gif") || exts.equals(".gif")) {
-                    JsonObject jObjfile = jfiarray.add<JsonObject>();
-                    jObjfile["name"] = root.name();
-                    jObjfile["path"] = root.path();
-                    jObjfile["size"] = root.size();
-                }
-                
-            }
-
-            // Serial.print("\t\t");
-            // Serial.print(root.size(), DEC);
-            // Serial.println(" bytes");
-        }
-        root.close();
-    }
-}
-
-void FileManager::filterFile(String exts) {
-    if (xSemaphoreTake(sdSemaphore, pdMS_TO_TICKS(100)) == pdTRUE)
-    {
-        JsonDocument doc;
-        doc["root"] = "/main";
-        JsonArray files = doc["files"].to<JsonArray>();
-        JsonArray folders = doc["folders"].to<JsonArray>();
-        // String jsondataFolder;
-        // String jsondataFile;
-        // String jsondata;
-        File root = SD.open("/main");
-        if(!root) {
-            return;
-        }
-        scanfilterFile(root, 0, files, folders, exts);
-        root.close();
-        serializeJson(doc, jsondata);
-        Serial.println(jsondata);
+// 4. ฟังก์ชันเปลี่ยนชื่อ
+bool FileManager::renameFile(String oldPath, String newPath) {
+    // 🚨 บล็อกทั้งชื่อเก่าและชื่อใหม่
+    if (!oldPath.startsWith("/main") || !newPath.startsWith("/main") || oldPath == "/main") return false;
+    
+    if (xSemaphoreTake(sdSemaphore, pdMS_TO_TICKS(500)) == pdTRUE) {
+        bool res = SD.rename(oldPath, newPath);
         xSemaphoreGive(sdSemaphore);
-        doc.clear();
+        return res;
     }
+    return false;
 }
 
-void FileManager::filterFileInPath(String path, String exts) {
-    if (xSemaphoreTake(sdSemaphore, pdMS_TO_TICKS(100)) == pdTRUE)
-    {
-        JsonDocument doc;
-        doc["root"] = path;
-        JsonArray files = doc["files"].to<JsonArray>();
-        JsonArray folders = doc["folders"].to<JsonArray>();
-        // String jsondataFolder;
-        // String jsondataFile;
-        // String jsondata;
-        File root = SD.open(path);
-        if(!root) {
-            return;
-        }
-        scanfilterFile(root, 0, files, folders, exts);
-        root.close();
-        serializeJson(doc, jsondata);
-        Serial.println(jsondata);
+// ฟังก์ชันสร้างโฟลเดอร์
+bool FileManager::createFolder(String path) {
+    if (!path.startsWith("/main")) return false; 
+    
+    if (xSemaphoreTake(sdSemaphore, pdMS_TO_TICKS(500)) == pdTRUE) {
+        bool res = SD.mkdir(path.c_str()); 
         xSemaphoreGive(sdSemaphore);
-        doc.clear();
+        return res;
     }
+    return false;
 }

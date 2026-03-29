@@ -6,9 +6,9 @@
 #endif
 
 // SDcard pin
-#define MOSI 13
-#define MISO 27
-#define SCL 14
+#define MOSI 23
+#define MISO 19 
+#define SCL 18
 #define CS 15
 extern bool isConnectSDcard;
 
@@ -20,11 +20,11 @@ public:
     FileManager();
     ~FileManager();
     void initSDCard();
-    void scanAll(File dir, int numTabs, JsonArray &jfiarray, JsonArray &jfoarray);
-    void listFileAll();
-    void scanfilterFile(File dir, int numTabs, JsonArray &jfiarray, JsonArray &jfoarray, String exts);
-    void filterFile(String exts);
-    void filterFileInPath(String path, String exts);
+    String getFileListJSON(String dirPath);
+    bool createFile(String path);
+    bool createFolder(String path);
+    bool deleteFile(String path);
+    bool renameFile(String oldPath, String newPath);
 };
 
 #ifndef FILE_CARD
