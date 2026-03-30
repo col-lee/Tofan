@@ -21,8 +21,8 @@ void FileManager::initSDCard()
     pinMode(CS, OUTPUT);
     digitalWrite(CS, HIGH);
     vspi.begin(SCL, MISO, MOSI, CS);
-    // vspi.setFrequency(8000000);
-    if (SD.begin(CS, vspi))
+    vspi.setFrequency(8000000);
+    if (SD.begin(CS, vspi, 8000000))
     {
         isConnectSDcard = true;
         Serial.println("SD mount card.");

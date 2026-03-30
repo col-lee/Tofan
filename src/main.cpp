@@ -113,10 +113,10 @@ void setup() {
     xSemaphoreGive(sdSemaphore);
   }
 
-  BaseType_t task1 = xTaskCreatePinnedToCore(handleAudio, "handleAudio", 5 * 1024, NULL, 3, &t_handleAudio, 1);
-  BaseType_t netWorkTask = xTaskCreatePinnedToCore(runNet, "runNet", 3 * 1024, NULL, 3, &runnet, tskNO_AFFINITY);
-  BaseType_t disPTask = xTaskCreatePinnedToCore(handleDisplay, "handleDisplay", 6 * 1024, NULL, 2, &t_handleDisplay, 1);
-  if(task1 && netWorkTask && disPTask!= pdPASS) {
+BaseType_t task1 = xTaskCreatePinnedToCore(handleAudio, "handleAudio", 5 * 1024, NULL, 2, &t_handleAudio, 1);
+BaseType_t netWorkTask = xTaskCreatePinnedToCore(runNet, "runNet", 3 * 1024, NULL, 3, &runnet, 0);
+BaseType_t disPTask = xTaskCreatePinnedToCore(handleDisplay, "handleDisplay", 4 * 1024, NULL, 2, &t_handleDisplay, 1);
+  if(/*task1 &&*/ netWorkTask && disPTask!= pdPASS) {
     Serial.println("Create Task Error.");
     if(xSemaphoreTake(displaySemaphore ,pdMS_TO_TICKS(100)) == pdTRUE) {
       tft.setTextColor(TFT_RED);
@@ -165,6 +165,13 @@ void loop() {
     //   Serial.printf("SW_2: %d \n", digitalRead(SW_PIN));
     // }
 
-    Serial.printf("Freeheap: %lu\n", ESP.getFreeHeap());
-    vTaskDelay(100);
+    Serial.printf("Freeheap: %lu, Min free: %lu\n", 
+      ESP.getFreeHeap(), 
+      ESP.getMinFreeHeap());
+    
+    Serial.printf("Audio Stack: %u, Display Stack: %u, Net Stack: %u\n",
+      uxTaskGetStackHighWaterMark(t_handleAudio),
+      uxTaskGetStackHighWaterMark(t_handleDisplay),
+      uxTaskGetStackHighWaterMark(runnet));
+    vTaskDelay(1000);
 }

@@ -55,12 +55,6 @@ void handleAudio(void *parameter) {
               if (currentState == STATE_PAUSED) {
                   audio.pauseResume(); // เล่นต่อจากเดิม
               } 
-              else if (currentState == STATE_STOPPED && currentFilePath != "") {
-                  if(xSemaphoreTake(sdSemaphore, pdMS_TO_TICKS(500)) == pdTRUE) {
-                      audio.connecttoFS(SD, currentFilePath.c_str()); 
-                      xSemaphoreGive(sdSemaphore);
-                  }
-              }
             }
             currentState = STATE_PLAYING;
             
