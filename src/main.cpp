@@ -21,15 +21,16 @@
 SemaphoreHandle_t displaySemaphore = NULL;
 TaskHandle_t t_handleAudio = NULL;
 TaskHandle_t t_handleDisplay = NULL;
+TaskHandle_t runnet = NULL;
+TaskHandle_t t_uiTask = NULL;
 QueueHandle_t sound_volume = NULL;
 QueueHandle_t display_command = NULL;
 QueueHandle_t audio_command = NULL;
 QueueHandle_t api_event_queue = NULL;
-TaskHandle_t runnet;
 NetworkManager nm;
 FileManager file_card;
 
-#define INPUT_SWITCH 32
+#define BTN_BACK 32
 // #define LED 32
 int state = 0;
 
@@ -75,7 +76,7 @@ void setup() {
   attachInterrupt(digitalPinToInterrupt(CLK_PIN), readEncoderISR, CHANGE);
 
   // pinMode(LEVEL_READ, INPUT);
-  pinMode(INPUT_SWITCH, INPUT);
+  pinMode(BTN_BACK, INPUT);
 
   // pinMode(LED, OUTPUT);
 
@@ -95,28 +96,25 @@ void setup() {
   DISM.initDisplay();
   vTaskDelay(pdMS_TO_TICKS(200));
   file_card.initSDCard();
-  vTaskDelay(pdMS_TO_TICKS(500));
+  vTaskDelay(pdMS_TO_TICKS(200));
   
-  nm.initWiFiManager();
-  vTaskDelay(pdMS_TO_TICKS(500));
-  nm.initWebServer();
-  vTaskDelay(pdMS_TO_TICKS(500));
-
+  nm.initNetwork();
+  vTaskDelay(pdMS_TO_TICKS(200));
+  
   websocket.onEvent([](AsyncWebSocket *server, AsyncWebSocketClient *client, AwsEventType type, void *arg, uint8_t *data, size_t len) {
     nm.onEvent(server, client, type, arg, data, len);
   });
   server.addHandler(&websocket);
-
+  
   initAudio();
-  if(xSemaphoreTake(sdSemaphore, pdMS_TO_TICKS(100)) == pdTRUE) {
-    SD.exists(mp3File) ? audio.connecttoFS(SD, mp3File) : Serial.println("File not found.");
-    xSemaphoreGive(sdSemaphore);
-  }
+  vTaskDelay(pdMS_TO_TICKS(500));
 
-BaseType_t task1 = xTaskCreatePinnedToCore(handleAudio, "handleAudio", 5 * 1024, NULL, 2, &t_handleAudio, 1);
-BaseType_t netWorkTask = xTaskCreatePinnedToCore(runNet, "runNet", 3 * 1024, NULL, 3, &runnet, 0);
-BaseType_t disPTask = xTaskCreatePinnedToCore(handleDisplay, "handleDisplay", 4 * 1024, NULL, 2, &t_handleDisplay, 1);
-  if(/*task1 &&*/ netWorkTask && disPTask!= pdPASS) {
+
+  BaseType_t task1 = xTaskCreatePinnedToCore(handleAudio, "handleAudio", 4 * 1024, NULL, 4, &t_handleAudio, 1);
+  BaseType_t netWorkTask = xTaskCreatePinnedToCore(runNet, "runNet",  4 * 1024, NULL, 3, &runnet, 0);
+  BaseType_t disPTask = xTaskCreatePinnedToCore(handleDisplay, "handleDisplay", 3 * 1024, NULL, 2, &t_handleDisplay, 1);
+
+  if(task1 && netWorkTask && disPTask != pdPASS) {
     Serial.println("Create Task Error.");
     if(xSemaphoreTake(displaySemaphore ,pdMS_TO_TICKS(100)) == pdTRUE) {
       tft.setTextColor(TFT_RED);
@@ -141,8 +139,7 @@ BaseType_t disPTask = xTaskCreatePinnedToCore(handleDisplay, "handleDisplay", 4 
   vTaskDelay(pdMS_TO_TICKS(1000));
 
   if(isDisplay_install && isFileManager_install && isNetwork_install && isAudio_install) {
-    tft.fillScreen(TFT_BLACK);
-    DISM.drawJpeg("/main/Pictures/test.jpg", 0, 40);
+    
   } else {
     tft.fillScreen(TFT_BLACK);
     tft.setCursor(0,0);
@@ -151,27 +148,28 @@ BaseType_t disPTask = xTaskCreatePinnedToCore(handleDisplay, "handleDisplay", 4 
 }
    
 void loop() {
-    // state = digitalRead(INPUT_SWITCH);
-    // Serial.printf("SW_1: %d \n", state);
 
     if (encoderValue != lastEncoderValue) {
       Serial.printf("Volume: %d\n", encoderValue);
       lastEncoderValue = encoderValue;
     }
 
-    // if(digitalRead(SW_PIN) == HIGH) {
-    //   Serial.printf("SW_2: %d \n", digitalRead(SW_PIN));
-    // } else {
-    //   Serial.printf("SW_2: %d \n", digitalRead(SW_PIN));
-    // }
+    if(digitalRead(SW_PIN) == LOW || digitalRead(BTN_BACK) == HIGH) {
+      Serial.printf("SW_1: %d \n", digitalRead(BTN_BACK));
+      Serial.printf("SW_2: %d \n", digitalRead(SW_PIN));
+    } else {
+      Serial.printf("SW_1: %d \n", digitalRead(BTN_BACK));
+      Serial.printf("SW_2: %d \n", digitalRead(SW_PIN));
+    }
 
-    Serial.printf("Freeheap: %lu, Min free: %lu\n", 
+    Serial.printf("Freeheap: %lu, Min free: %lu, MaxAllocHeap: %lu\n", 
       ESP.getFreeHeap(), 
-      ESP.getMinFreeHeap());
+      ESP.getMinFreeHeap(),
+      ESP.getMaxAllocHeap());
     
     Serial.printf("Audio Stack: %u, Display Stack: %u, Net Stack: %u\n",
       uxTaskGetStackHighWaterMark(t_handleAudio),
       uxTaskGetStackHighWaterMark(t_handleDisplay),
       uxTaskGetStackHighWaterMark(runnet));
-    vTaskDelay(1000);
+    vTaskDelay(1500);
 }

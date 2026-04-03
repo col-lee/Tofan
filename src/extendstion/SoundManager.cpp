@@ -19,6 +19,11 @@ void initAudio(){
   audio.setPinout(BLCK_PIN, RLC_PIN, DIN_PIN);
   audio.setVolume(50);
   isAudio_install = true;
+
+  // if (xSemaphoreTake(sdSemaphore, pdMS_TO_TICKS(500)) == pdTRUE) {
+  //   audio.connecttoFS(SD, "/main/Musics/Exil_-_Hiboky.mp3");
+  //   xSemaphoreGive(sdSemaphore);
+  // }
 }
 
 void handleAudio(void *parameter) {
@@ -99,7 +104,10 @@ void handleAudio(void *parameter) {
       
       if (currentState == STATE_PLAYING) {
         // เอาดีเลย์ 5ms ออกแล้ว ให้ audio.loop() ทำงานตลอดเวลาเพื่อป้องกันเพลงกระตุก
-        audio.loop(); 
+        if(xSemaphoreTake(sdSemaphore, pdMS_TO_TICKS(5)) == pdTRUE) {
+            audio.loop(); 
+            xSemaphoreGive(sdSemaphore);
+        }
       }
       
       // 3. จัดการ Volume ผ่าน Rotary Encoder

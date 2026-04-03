@@ -21,7 +21,6 @@
 
 #if defined (TFT_eSPI_H)
     extern TFT_eSPI tft;
-    // extern TFT_eSprite txtDis;
 #endif
 
 #if defined (ARDUINO_H)
@@ -30,6 +29,7 @@
     extern TaskHandle_t t_handleAudio;
     extern TaskHandle_t t_handleDisplay;
     extern TaskHandle_t runnet;
+    extern TaskHandle_t t_uiTask;
     extern QueueHandle_t q_handleMsg;
     extern QueueHandle_t sound_volume;
     extern QueueHandle_t display_command;

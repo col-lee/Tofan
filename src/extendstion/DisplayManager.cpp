@@ -3,18 +3,15 @@
 #define DISPLAYMANAGER_HH
 
 TFT_eSPI tft = TFT_eSPI();
-TFT_eSprite txtDis = TFT_eSprite(&tft);
 DisplayManager DISM;
 
-const char *giphy = "/main/Pictures/giphy2.gif";
-const char *fan = "/main/Pictures/fan.gif";
-const char *robot = "/main/Pictures/robot240.gif";
-const char *mp3File = "/main/Musics/Exil_-_Hiboky.mp3";
+AnimatedGIF gif;
+File gifFile;
+bool isGifPlaying = false;
 
-static int xOffset = 0;
-static int yOffset = 0;
+static int iXOff = 0; 
+static int iYOff = 0;
 
-int offsetY_of_scroll = 0;
 bool isDisplay_install;
 
 DisplayManager::DisplayManager() {
@@ -25,16 +22,13 @@ DisplayManager::~DisplayManager() {
     
 }
 
-void DisplayManager::autoScroll() {
-    
-}
-
 void DisplayManager::initDisplay(){
     if(xSemaphoreTake(displaySemaphore, pdMS_TO_TICKS(500)) == pdTRUE) {
         tft.init();
-        tft.setRotation(0);
+        tft.setRotation(1  );
         tft.setTextSize(2);
         tft.fillScreen(TFT_BLACK);
+
         isDisplay_install = true;
         xSemaphoreGive(displaySemaphore);
     }
@@ -46,54 +40,6 @@ void DisplayManager::resetDisplay(){
         tft.setCursor(0, 0);
         xSemaphoreGive(displaySemaphore);
     }
-}
-
-void println(String &text) {
-    tft.println(text.c_str());
-}
-
-void println(const String &text) {
-    tft.println(text.c_str());
-}
-
-void println(char &text) {
-    tft.println(text);
-}
-
-void println(const char &text) {
-    tft.println(text);
-}
-
-void println(int &text) {
-    tft.println(text);
-}
-
-void println(const int &text) {
-    tft.println(text);
-}
-
-void println(long &text) {
-    tft.println(text);
-}
-
-void println(const long &text) {
-    tft.println(text);
-}
-
-void println(float &text) {
-    tft.println(text);
-}
-
-void println(const float &text) {
-    tft.println(text);
-}
-
-void println(double &text) {
-    tft.println(text);
-}
-
-void println(const double &text) {
-    tft.println(text);
 }
 
 void DisplayManager::createArray(const char *filename) {
@@ -228,22 +174,180 @@ void DisplayManager::drawJpeg(const char *filename, int xpos, int ypos) {
     }
 }
 
+// ==========================================
+// Callback Functions สำหรับ AnimatedGIF
+// ==========================================
+void * GIFOpenFile(const char *fname, int32_t *pSize) {
+  if(xSemaphoreTake(sdSemaphore, portMAX_DELAY) == pdTRUE) {
+      gifFile = SD.open(fname);
+      if (gifFile) {
+        *pSize = gifFile.size();
+        xSemaphoreGive(sdSemaphore);
+        return (void *)&gifFile;
+      }
+      xSemaphoreGive(sdSemaphore);
+  }
+  return NULL;
+}
+
+void GIFCloseFile(void *pHandle) { 
+  if(xSemaphoreTake(sdSemaphore, portMAX_DELAY) == pdTRUE) {
+      gifFile.close(); 
+      xSemaphoreGive(sdSemaphore);
+  }
+}
+
+int32_t GIFReadFile(GIFFILE *pFile, uint8_t *pBuf, int32_t iLen) { 
+    int32_t bytesRead = 0;
+    if(xSemaphoreTake(sdSemaphore, portMAX_DELAY) == pdTRUE) {
+        // 🌟 ให้ ESP32 จัดการเรื่อง EOF เองล้วนๆ ไม่ต้องมี Work-around
+        bytesRead = gifFile.read(pBuf, iLen);
+        pFile->iPos = gifFile.position();
+        xSemaphoreGive(sdSemaphore);
+    }
+    return bytesRead;
+}
+
+int32_t GIFSeekFile(GIFFILE *pFile, int32_t iPosition) { 
+    if(xSemaphoreTake(sdSemaphore, portMAX_DELAY) == pdTRUE) {
+        gifFile.seek(iPosition);
+        pFile->iPos = gifFile.position();
+        xSemaphoreGive(sdSemaphore);
+    }
+    return pFile->iPos;
+}
+
+#define BUFFER_SIZE 256
+uint16_t usTemp[1][BUFFER_SIZE]; 
+
+void GIFDraw(GIFDRAW *pDraw) {
+  uint8_t *s;
+  uint16_t *d, *usPalette;
+  int x, y, iWidth, iCount;
+
+  iWidth = pDraw->iWidth;
+  if (iWidth + pDraw->iX > tft.width()) iWidth = tft.width() - pDraw->iX;
+    
+  usPalette = pDraw->pPalette;
+  y = iYOff + pDraw->iY + pDraw->y; // จัดกึ่งกลางแนวตั้ง
+
+  if (y >= tft.height() || (iXOff + pDraw->iX) >= tft.width() || iWidth < 1) return;
+
+  s = pDraw->pPixels;
+  if (pDraw->ucDisposalMethod == 2) { 
+    for (x = 0; x < iWidth; x++) {
+      if (s[x] == pDraw->ucTransparent) s[x] = pDraw->ucBackground;
+    }
+    pDraw->ucHasTransparency = 0;
+  }
+
+  // 🌟 รอคิวหน้าจอ
+  if (xSemaphoreTake(displaySemaphore, portMAX_DELAY) == pdTRUE) {
+      if (pDraw->y == 0) Serial.println(">>> DRAWING 1 FRAME! <<<");
+      // --- กรณีที่ 1: ภาพมีพื้นหลังโปร่งใส ---
+      if (pDraw->ucHasTransparency) {
+        uint8_t *pEnd, c, ucTransparent = pDraw->ucTransparent;
+        pEnd = s + iWidth;
+        x = 0;
+        iCount = 0;
+        
+        while (x < iWidth) {
+          c = ucTransparent - 1;
+          d = &usTemp[0][0];
+          
+          while (c != ucTransparent && s < pEnd && iCount < BUFFER_SIZE) {
+            c = *s++;
+            if (c == ucTransparent) s--; 
+            else { *d++ = usPalette[c]; iCount++; }
+          } 
+          
+          if (iCount) {
+            // 🌟 เปลี่ยนมาใช้ pushImage แก้ปัญหาหน้าจอไม่รับข้อมูล
+            tft.pushImage(iXOff + pDraw->iX + x, y, iCount, 1, usTemp[0]);
+            x += iCount;
+            iCount = 0;
+          }
+          
+          c = ucTransparent;
+          while (c == ucTransparent && s < pEnd) {
+            c = *s++;
+            if (c == ucTransparent) x++; else s--;
+          }
+        }
+      } 
+      // --- กรณีที่ 2: ภาพทึบปกติ (เขียนโค้ดให้สั้นและไวขึ้นมาก) ---
+      else {
+        s = pDraw->pPixels;
+        int currentX = iXOff + pDraw->iX; 
+        
+        while (iWidth > 0) {
+            int toDraw = (iWidth <= BUFFER_SIZE) ? iWidth : BUFFER_SIZE;
+            for (iCount = 0; iCount < toDraw; iCount++) {
+                usTemp[0][iCount] = usPalette[*s++];
+            }
+            // 🌟 เปลี่ยนมาใช้ pushImage
+            tft.pushImage(currentX, y, toDraw, 1, usTemp[0]);
+            currentX += toDraw;
+            iWidth -= toDraw;
+        }
+      }
+      xSemaphoreGive(displaySemaphore);
+  }
+}
+
+// ==========================================
+
+bool DisplayManager::openGif(const char *filename) {
+    gif.begin(GIF_PALETTE_RGB565_BE);
+    if (gif.open(filename, GIFOpenFile, GIFCloseFile, GIFReadFile, GIFSeekFile, GIFDraw)) {
+        Serial.printf("Playing GIF: %s\n", filename);
+        
+        // 🌟 คำนวณจัดกึ่งกลางภาพ
+        iXOff = (tft.width() - gif.getCanvasWidth()) / 2;
+        if (iXOff < 0) iXOff = 0;
+        
+        iYOff = (tft.height() - gif.getCanvasHeight()) / 2;
+        if (iYOff < 0) iYOff = 0;
+        
+        return true;
+    } else {
+        Serial.println("Failed to open GIF file.");
+        return false;
+    }
+}
+
+int DisplayManager::playGifFrame() {
+    // คืนค่ากลับไปให้ handleDisplay รู้ว่าเล่นจบหรือ Error หรือยัง
+    return gif.playFrame(true, NULL); 
+}
+
+void DisplayManager::stopGif() {
+    gif.close();
+    Serial.println("GIF Stopped.");
+}
+
+// 🌟 นำโค้ด Task ตัวที่ถูกต้องมาใช้งาน (เช็ค waitTime)
 void handleDisplay(void *pvParameters) {
     DISPLAY_COMMAND cmd;
-    enum class STATE { IDLE, SHOW, CLEAR } state = STATE::IDLE;
+    enum class STATE { IDLE, SHOW, CLEAR, PLAYING_GIF } state = STATE::IDLE;
     String lastPath = "";
 
     for (;;) {
-        if(xQueueReceive(display_command, &cmd, 10) == pdPASS) {
+        // 🌟 ไม่ Block คิวเวลาเล่น GIF ทำให้เฟรมเรตไม่ตก
+        TickType_t waitTime = (state == STATE::PLAYING_GIF) ? pdMS_TO_TICKS(5) : pdMS_TO_TICKS(10);
+        
+        if(xQueueReceive(display_command, &cmd, waitTime) == pdPASS) {
             if(cmd.module == DISPLAY_COMMAND::MODULE::DIS) {
                 
                 if(cmd.display_state == DISPLAY_COMMAND::DISPLAY_STATE::SHOW) {
                     lastPath = cmd.path;
+                    if(state == STATE::PLAYING_GIF) DISM.stopGif();
                     state = STATE::SHOW;
                     Serial.println("SHOW OK. Path: " + lastPath);
                 }
 
                 if(cmd.display_state == DISPLAY_COMMAND::DISPLAY_STATE::CLEAR) {
+                    if(state == STATE::PLAYING_GIF) DISM.stopGif();
                     state = STATE::CLEAR;
                     Serial.println("CLEAR OK.");
                 }
@@ -254,28 +358,57 @@ void handleDisplay(void *pvParameters) {
         case STATE::SHOW:
             if (lastPath != "") {
                 String pathLower = lastPath;
+                pathLower.toLowerCase();
                 DISM.resetDisplay();
                 
                 if (pathLower.endsWith(".jpg") || pathLower.endsWith(".jpeg")) {
                     DISM.drawJpeg(lastPath.c_str(), 0, 40);
+                    state = STATE::IDLE; 
+                } else if(pathLower.endsWith(".gif")){
+                    if(DISM.openGif(lastPath.c_str())) {
+                        Serial.println("openedd.");
+                        state = STATE::PLAYING_GIF; 
+                    } else {
+                        state = STATE::IDLE;
+                    }
+                } else {
+                     state = STATE::IDLE;
                 }
+            } else {
+                state = STATE::IDLE;
             }
-            
-            state = STATE::IDLE;
-            vTaskDelay(pdMS_TO_TICKS(10));
             break;
 
+        case STATE::PLAYING_GIF:
+        {   // 🌟 ใส่ปีกกาครอบเคสนี้ไว้ด้วย
+            int result = DISM.playGifFrame();
+            
+            // ถ้าเล่นจนจบไฟล์แล้ว (<= 0)
+            if (result <= 0) {
+                DISM.stopGif(); // ปิดไฟล์เก่า
+                
+                // 🌟 พยายามเปิดไฟล์เดิมอีกครั้ง เพื่อเล่นแบบวนลูป
+                if (DISM.openGif(lastPath.c_str())) {
+                    // เปิดสำเร็จ จะทำงานต่อในลูปหน้า
+                } else {
+                    // แต่ถ้าไฟล์พัง เปิดไม่ติด ให้กลับไปหน้าจอดำ (IDLE) เพื่อไม่ให้สแปม
+                    state = STATE::IDLE;
+                }
+            }
+            vTaskDelay(pdMS_TO_TICKS(1)); 
+            break;
+        }
+
         case STATE::CLEAR:
-            DISM.resetDisplay(); 
+            DISM.resetDisplay();
             state = STATE::IDLE;
             vTaskDelay(pdMS_TO_TICKS(10));
             break;
         
+        case STATE::IDLE:
         default:
             vTaskDelay(pdMS_TO_TICKS(50));
             break;
         } 
     }
-
-    vTaskDelay(pdMS_TO_TICKS(1));
 }

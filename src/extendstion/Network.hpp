@@ -17,7 +17,6 @@
 extern AsyncWebServer server;
 extern AsyncWebSocket websocket;
 extern Preferences prefs; // instance Preferences for Save ssid and password
-extern JsonDocument docs;
 
 class NetworkManager {
 public:
@@ -31,12 +30,10 @@ public:
     bool readUsername();
     bool clearUsername();
     bool connectoWiFi(const char *ssid, const char *password);
-    void handleWebSocketMessage(void *arg, uint8_t *data, size_t len);
-    void onEvent(AsyncWebSocket *server, AsyncWebSocketClient *client, AwsEventType type, void *arg, uint8_t *data, size_t len);
-    void initWiFiManager();
-    void initWebServer();
     void generateToken(char* token, int length);
     void writeLog(String &log);
+    void startAdminMode();
+    void stopAdminMode();
 };
 
 void runNet(void* pvParameter);
