@@ -6,6 +6,7 @@
 #include "extendstion/FileManager.hpp"
 #include "extendstion/Network.hpp"
 #include "extendstion/SoundManager.hpp"
+#include "extendstion/IOManager.hpp"
 
 #ifndef DISPLAYMANAGER_HH
 #define DISPLAYMANAGER_HH
@@ -160,6 +161,17 @@ void handleInput() {
                 case 3:
                     DISM.currentState = UI_STATE::APP_PET;
                     DISM.drawAIPet();
+                    break;
+
+                case 4:
+                    DISM.currentState = UI_STATE::DEBUG;
+                    DISM.debug();
+                    break;
+
+                case 5:
+                    DISM.currentState = UI_STATE::RECORDE;
+                    DISM.recorde();
+                    startRecording("/main/Musics/test.wav");
                     break;
                     
             }
@@ -360,6 +372,15 @@ void handleInput() {
                 }
             }
         }
+
+        else if(DISM.currentState == UI_STATE::DEBUG) {
+            DISM.debug();
+        }
+
+        else if(DISM.currentState == UI_STATE::RECORDE) {
+            DISM.recorde();
+        }
+
     }
 
     // 3. ตรวจจับปุ่ม "ย้อนกลับ" (BTN_BACK) แบบกดธรรมดา / กดค้าง
@@ -434,6 +455,21 @@ void handleInput() {
                 }
 
                 else if(DISM.currentState == UI_STATE::APP_PET) {
+                    rotaryEncoder.setBoundaries(-DISM.boundaries_home, DISM.boundaries_home, false);
+                    rotaryEncoder.setEncoderValue(DISM.animatedMenuIndex_target);
+                    DISM.currentState = UI_STATE::HOME_MENU;
+                    DISM.drawHomeMenu();
+                }
+
+                else if(DISM.currentState == UI_STATE::DEBUG) {
+                    rotaryEncoder.setBoundaries(-DISM.boundaries_home, DISM.boundaries_home, false);
+                    rotaryEncoder.setEncoderValue(DISM.animatedMenuIndex_target);
+                    DISM.currentState = UI_STATE::HOME_MENU;
+                    DISM.drawHomeMenu();
+                }
+
+                else if(DISM.currentState == UI_STATE::RECORDE) {
+                    stopRecording();
                     rotaryEncoder.setBoundaries(-DISM.boundaries_home, DISM.boundaries_home, false);
                     rotaryEncoder.setEncoderValue(DISM.animatedMenuIndex_target);
                     DISM.currentState = UI_STATE::HOME_MENU;
@@ -663,7 +699,18 @@ void loop() {
         vTaskDelay(50);
     }
 
-    readMicData();
+    if(DISM.currentState == UI_STATE::DEBUG) {
+        DISM.debug();
+        vTaskDelay(5);
+    }
+
+    if(DISM.currentState == UI_STATE::RECORDE) {
+        DISM.recorde();
+        recordLoop();
+        vTaskDelay(1);
+    }
+
+    detectWord();
 
     // Serial.printf("Freeheap: %lu, Min free: %lu, MaxAllocHeap: %lu\n", 
     //   ESP.getFreeHeap(), 

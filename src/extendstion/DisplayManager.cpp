@@ -125,7 +125,7 @@ void DisplayManager::drawHomeMenu(bool pushToScreen) {
     int spacingX = 110;            
     float curveIntensity = 12.0;   
 
-    const char* menus[totalItems] = {"Display", "Music", "Settings", "Pet", "About"};
+    const char* menus[totalItems] = {"Display", "Music", "Settings", "Pet", "Debug", "Recorde"};
 
     for (int i = 0; i < totalItems; i++) {
         // 🌟 2. Infinite Loop Logic: ใช้ fmod เพื่อให้ค่าวนลูป 0-5 เสมอ
@@ -196,6 +196,10 @@ void DisplayManager::drawHomeMenu(bool pushToScreen) {
         } 
         else if (i == 4) { // About
             spr.drawString("?", x, y, 4);
+        } 
+
+        else if(i == 5) {
+            spr.fillCircle(x, y, 18*scale, TFT_RED);
         }
 
         // 🌟 4. วาดชื่อเมนูเฉพาะตัวที่ "ถูกเลือก" (Active Feature)
@@ -883,6 +887,64 @@ void DisplayManager::drawAIPet(bool pushToScreen) {
             xSemaphoreGive(displaySemaphore);
         }
     }
+}
+
+void DisplayManager::debug() {
+    if(spr.getBuffer() == nullptr) return;
+    
+    // 🌟 พื้นหลังดำสนิท
+    spr.fillSprite(TFT_BLACK);
+    spr.setCursor(0,10);
+    spr.printf("Mic Level: %" PRId16 "\n", readMicData());
+    spr.printf("Freeheap: %lu, \nMin free: %lu, \nMaxAllocHeap: %lu\n", 
+      ESP.getFreeHeap(), 
+      ESP.getMinFreeHeap(),
+      ESP.getMaxAllocHeap());
+    
+    spr.printf("Audio Stack: %u, \nDisplay Stack: %u, \nNet Stack: %u\n",
+      uxTaskGetStackHighWaterMark(t_handleAudio),
+      uxTaskGetStackHighWaterMark(t_handleDisplay),
+      uxTaskGetStackHighWaterMark(runnet));
+
+    if (psramFound())
+    {
+        spr.printf("PSRAM Available: %d bytes\n", ESP.getPsramSize());
+        spr.printf("PSRAM True Available: %d bytes\n", ESP.getFreePsram());
+    }
+    else
+    {
+        spr.println("❌ ไม่พบ PSRAM!");
+    }
+
+    if (xSemaphoreTake(displaySemaphore, 0) == pdTRUE)
+    {
+        spr.pushSprite(0, 0);
+        xSemaphoreGive(displaySemaphore);
+    }
+}
+
+void DisplayManager::recorde() {
+    if(spr.getBuffer() == nullptr) return;
+
+    unsigned long currentMillis = millis();
+
+    if (currentMillis - previousMillis >= interval) {
+    
+    // บันทึกเวลาปัจจุบันไว้เป็นจุดอ้างอิงใหม่
+    previousMillis = currentMillis;
+    
+    spr.fillSprite(TFT_BLACK);
+    seconds += 1;
+    spr.setCursor(120, 160);
+    spr.printf("%lu", seconds);
+    if (xSemaphoreTake(displaySemaphore, 0) == pdTRUE)
+    {
+        spr.pushSprite(0, 0);
+        xSemaphoreGive(displaySemaphore);
+    }
+    
+  }
+    
 }
 
 // ฟังก์ชันสำหรับแอบอ่านขนาดกว้าง/สูง จาก Header ของไฟล์ JPEG

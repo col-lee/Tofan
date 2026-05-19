@@ -3,6 +3,7 @@
 #ifndef SD_H
 #define SD_H
 #include <SD.h>
+#include <FS.h>
 #endif
 
 // SDcard pin

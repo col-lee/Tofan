@@ -20,7 +20,9 @@ enum class UI_STATE {
     GLOBAL_VOLUME,
     POPUP_NO_MUSIC,
     APP_ONLINE_MUSIC,
-    APP_PET
+    APP_PET,
+    DEBUG,
+    RECORDE
 };
 
 class DisplayManager {
@@ -40,7 +42,7 @@ public:
     bool isAnimatingMenu = false;
     float animatedMenuIndex_target = 0.0;
     int boundaries_home = 2000;
-    int totalItems = 5;
+    int totalItems = 6;
     
     int currentMusicControlIndex = 1;
     int currentMenuIndex = 0; // 0-5 สำหรับ Grid Menu
@@ -120,8 +122,13 @@ public:
     void drawSettings(bool pushToScreen = true);
 
     void drawAIPet(bool pushToScreen = true);
+    void debug();
+    void recorde();
 private:
     bool getJpegSize(const char* filename, uint16_t &width, uint16_t &height);
+    long seconds;
+    unsigned long previousMillis = 0; // เก็บเวลาครั้งล่าสุดที่เปลี่ยนสถานะ
+    const long interval = 1000;
 };
 
 void handleDisplay(void* pvParameter);

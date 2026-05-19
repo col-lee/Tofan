@@ -1,9 +1,12 @@
+#pragma once
 #ifndef SOUNDMANAGER_H
 #define SOUNDMANAGER_H
 
 #include <Audio.h>
 #include <driver/i2s.h>
 #include "GlobalVar.hpp"
+
+#define LED_PIN 18
 
 // Audio pin
 #define RLC_PIN 5
@@ -37,8 +40,21 @@ extern bool isAudio_install;
 
 void initAudio();
 void initMicrophone();
-void readMicData();
+int16_t readMicData();
 void handleAudio(void *parameter);
+void startRecording(const char* path);
+void recordLoop();
+void stopRecording();
+
+void detectWord();
+static void audio_inference_callback(uint32_t n_bytes);
+static void capture_samples(void* arg);
+static bool microphone_inference_start(uint32_t n_samples);
+static bool microphone_inference_record(void);
+static int microphone_audio_signal_get_data(size_t offset, size_t length, float *out_ptr);
+static void microphone_inference_end(void);
+static int i2s_init(uint32_t sampling_rate);
+static int i2s_deinit(void);
 
 // ประกาศฟังก์ชัน Callback ของไลบรารี I2S
 void audio_info(const char *info);
