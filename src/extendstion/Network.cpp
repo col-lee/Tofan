@@ -5,20 +5,14 @@
 
 DNSServer dnsServer;
 AsyncWebServer server(80);
+AsyncWebSocket websocket("/ws");
 IPAddress apIP(192,168,4,1);
 Preferences prefs; // instance Preferences for Save ssid and password
 
-bool isNetwork_install;
-
+bool isNetwork_install = false;
 unsigned long ota_progress_millis = 0;
 
-bool wifi_isconnect = true;
-
-typedef struct
-{
-  char ssid[32] = "";
-  char password[32] = "";
-} PrefsObj_WiFiManager; // object for get ssid and password
+static bool isServerConfigured = false;
 
 typedef struct
 {
@@ -39,30 +33,6 @@ struct UploadState {
 };
 
 UploadState uploadState = {File(), false, 0, 0, ""};
-
-void onOTAStart() {
-  // Log when OTA has started
-  Serial.println("OTA update started!");
-  // <Add your own code here>
-}
-
-void onOTAProgress(size_t current, size_t final) {
-  // Log every 1 second
-  if (millis() - ota_progress_millis > 1000) {
-    ota_progress_millis = millis();
-    Serial.printf("OTA Progress Current: %u bytes, Final: %u bytes\n", current, final);
-  }
-}
-
-void onOTAEnd(bool success) {
-  // Log when OTA has finished
-  if (success) {
-    Serial.println("OTA update finished successfully!");
-  } else {
-    Serial.println("There was an error during OTA update!");
-  }
-  // <Add your own code here>
-}
 
 bool NetworkManager::writePrefs()
 {
@@ -151,10 +121,17 @@ void NetworkManager::writeLog(String &log) {
   }
 }
 
+void NetworkManager::closeWiFiSTA() {
+  MDNS.end();
+  WiFi.disconnect(true);
+  WiFi.mode(WIFI_OFF);
+  Serial.println("WiFi off.");
+}
+
 bool NetworkManager::connectoWiFi(const char *ssid, const char *password)
 {
 
-  if(ssid == "" && password == "" && ssid == NULL && password == NULL) {
+  if(ssid == nullptr && password == nullptr && strlen(ssid) == 0 && strlen(password) == 0) {
     Serial.println("ssid or password is invalid or null.");
     return false;
   }
@@ -163,7 +140,9 @@ bool NetworkManager::connectoWiFi(const char *ssid, const char *password)
   unsigned long interval = 1000;
   int seconds = 0;
 
+  WiFi.mode(WIFI_STA);
   WiFi.begin(ssid, password);
+  WiFi.setSleep(false);
   Serial.print("Connecting to wifi.");
   while (WiFi.status() != WL_CONNECTED)
   {
@@ -226,6 +205,7 @@ bool NetworkManager::connectoWiFi(const char *ssid, const char *password)
   else {
     Serial.println("WiFi connect Time out.");
     WiFi.disconnect();
+    WiFi.mode(WIFI_OFF);
     MDNS.end();
     return false;
   }
@@ -233,50 +213,144 @@ bool NetworkManager::connectoWiFi(const char *ssid, const char *password)
   return false;
 }
 
-void NetworkManager::startAdminMode() {
+bool NetworkManager::connectoWiFi() {
 
-    // ########################################################################################
-    // #                                    WIFI AP SETTING                                   #
-    // ########################################################################################
+  nm.readPrefs();
+  unsigned long preTime = 0;
+  unsigned long interval = 1000;
+  int seconds = 0;
 
-    WiFi.mode(WIFI_AP_STA);
-    WiFi.softAP("terngai555", "esp32-pass");
-    WiFi.softAPConfig(apIP,apIP, IPAddress(255,255,255,0));
+  WiFi.mode(WIFI_STA);
+  WiFi.begin(prefs_Obj.ssid, prefs_Obj.password);
+  WiFi.setSleep(false);
+  Serial.print("Connecting to wifi.");
+  while (WiFi.status() != WL_CONNECTED)
+  {
+    unsigned long currentTime = millis();
+    if (seconds >= 5) {
+      Serial.println("");
+      Serial.println("WiFi connect Time out.");
+      if (xSemaphoreTake(displaySemaphore, pdMS_TO_TICKS(50)) == pdTRUE)
+      {
+        tft.println("WiFi connect Time out.");
+        xSemaphoreGive(displaySemaphore);
+      }
+      WiFi.disconnect();
+      vTaskDelay(pdMS_TO_TICKS(100));
+      return false;
+    }
+      
+    if ((currentTime - preTime) >= interval)
+    {
+      preTime = currentTime;
+      seconds++;
+      Serial.print(".");
+      if (xSemaphoreTake(displaySemaphore, pdMS_TO_TICKS(50)) == pdTRUE)
+      {
+        tft.print(".");
+        xSemaphoreGive(displaySemaphore);
+      }
+    }
+  }
 
-    if(xSemaphoreTake(displaySemaphore, pdMS_TO_TICKS(100)) == pdTRUE){
+  if (WiFi.status() == WL_CONNECTED)
+  {
+    Serial.println("");
+    Serial.println("WIFI Connected.");
+    Serial.println("Ready.");
+    Serial.print("IP: ");
+    Serial.println(WiFi.localIP());
+    Serial.print("speed: ");
+    Serial.println(WiFi.RSSI());
+
+    if(xSemaphoreTake(displaySemaphore ,pdMS_TO_TICKS(200)) == pdTRUE) {
+      tft.println("");
+      tft.println("WIFI Connected.");
+      tft.println("Ready.");
       tft.print("IP: ");
-      tft.println(apIP);
+      tft.println(WiFi.localIP());
+      tft.print("speed: ");
+      tft.println(WiFi.RSSI());
       xSemaphoreGive(displaySemaphore);
     }
 
-    dnsServer.start(53, "manager.local", apIP);
-    vTaskDelay(pdMS_TO_TICKS(100));
+    if(MDNS.begin("terngai")) {
+      Serial.println("mDNS responder started");
+      MDNS.addService("http", "tcp", 80);
+    } else {
+      Serial.println("Error setting up MDNS responder!");
+    }
+    return true;
+  }
+  else {
+    Serial.println("WiFi connect Time out.");
+    WiFi.disconnect();
+    WiFi.mode(WIFI_OFF);
+    MDNS.end();
+    return false;
+  }
 
-    // #########################################################################################
-    // #                                   WIFI STA SETTING                                    #
-    // #########################################################################################
+  return false;
+}
 
-    nm.readPrefs();
-    // !connectoWiFi(prefs_Obj.ssid, prefs_Obj.password) ? wifi_isconnect = true : wifi_isconnect = false;
+void NetworkManager::startAPMode() {
+  // ########################################################################################
+  // #                                    WIFI AP SETTING                                   #
+  // ########################################################################################
+  WiFi.mode(WIFI_AP);
+  WiFi.softAPConfig(apIP, apIP, IPAddress(255, 255, 255, 0));
+  WiFi.softAP("terngai555", "esp32-pass", 1, 0, 1);
 
-    // #########################################################################################
-    // #                            ROUTER FOR MANAGE WIFI PASSWORD                            #
-    // #########################################################################################
+  // if (xSemaphoreTake(displaySemaphore, pdMS_TO_TICKS(100)) == pdTRUE) {
+  //   tft.print("IP: ");
+  //   tft.println(apIP);
+  //   xSemaphoreGive(displaySemaphore);
+  // }
 
-    server.on("/wifiManager", HTTP_GET, [](AsyncWebServerRequest *request) {
-        request->send(SD, "/WEB_Source/WiFiManger/wifiManager.html", "text/html");
-    });
+  dnsServer.start(53, "manager.local", apIP);
+  vTaskDelay(pdMS_TO_TICKS(100));
+}
 
-    server.on("/wifi", HTTP_OPTIONS, [](AsyncWebServerRequest *request){
+void NetworkManager::startAdminMode() {
+      if (!isServerConfigured) {
+        startAPMode();
+
+        // #########################################################################################
+        // #                                   WIFI STA SETTING                                    #
+        // #########################################################################################
+        if (isConnectSDcard) {
+
+          if (xSemaphoreTake(sdSemaphore, pdMS_TO_TICKS(1)) == pdTRUE)
+          {
+            server.on("/", HTTP_GET, [](AsyncWebServerRequest *request)
+                      { request->redirect("/index.html"); });
+
+            server.serveStatic("/", SD, "/WEB_Source/");
+            server.serveStatic("/pageUploadFile/", SD, "/WEB_Source/");
+            server.serveStatic("/controlPanel/", SD, "/WEB_Source/");
+            xSemaphoreGive(sdSemaphore);
+          }
+        }
+
+       
+
+      // #########################################################################################
+      // #                            ROUTER FOR MANAGE WIFI PASSWORD                            #
+      // #########################################################################################
+
+      server.on("/wifiManager", HTTP_GET, [](AsyncWebServerRequest *request)
+                { request->send(SD, "/WEB_Source/WiFiManger/wifiManager.html", "text/html"); });
+
+      server.on("/wifi", HTTP_OPTIONS, [](AsyncWebServerRequest *request)
+                {
       AsyncWebServerResponse* response = request->beginResponse(200);
       response->addHeader("Access-Control-Allow-Origin", "*");
       response->addHeader("Access-Control-Allow-Methods", "POST, GET, OPTIONS");
       response->addHeader("Access-Control-Allow-Headers", "Content-Type");
-      request->send(response);
-    });
+      request->send(response); });
 
-    server.on("/wifi", HTTP_POST,
-    [](AsyncWebServerRequest *request) {
+      server.on("/wifi", HTTP_POST, [](AsyncWebServerRequest *request)
+                {
         if (request->_tempObject != NULL) {
             String* res = (String*)request->_tempObject;
             if (*res == "REBOOT") {
@@ -293,10 +367,8 @@ void NetworkManager::startAdminMode() {
             request->_tempObject = NULL;
         } else {
             request->send(400, "text/plain", "Bad Request");
-        }
-    },
-    NULL,
-    [](AsyncWebServerRequest *request, uint8_t *data, size_t len, size_t index, size_t total) {
+        } }, NULL, [](AsyncWebServerRequest *request, uint8_t *data, size_t len, size_t index, size_t total)
+                {
         JsonDocument doc;
         DeserializationError error = deserializeJson(doc, (const char*)data);
         String* responseBody = new String();
@@ -319,80 +391,25 @@ void NetworkManager::startAdminMode() {
                 *responseBody = "Missing SSID or Password";
             }
         }
-        request->_tempObject = responseBody;
-    });
+        request->_tempObject = responseBody; });
 
-    // server.on("/wifi", HTTP_POST,[](AsyncWebServerRequest *request){},
-    // NULL,
-    // [](AsyncWebServerRequest *request, uint8_t *data, size_t len, size_t index, size_t total) {
-    //   JsonDocument doc;
-    //   DeserializationError error = deserializeJson(doc, (const char*)data);
+      // // ########################################################################################
+      // // # ROUTER FOR MANAGE LOGIN AND CHANGE USERNAME, PASSWORD ,CHECK TOKEN LOGIN, UPLOADFILE #
+      // // ########################################################################################
 
-    //   if (error) {
-    //     request->send(200, "application/json", "{\"error\":\"Invalid JSON\"}");
-    //     return;
-    //   }
-
-    //   const char* ssid = doc["ssid"];
-    //   const char* password = doc["password"];
-
-    //   if(ssid && password && strlen(ssid) > 0) {
-
-    //     strncpy(prefs_Obj.ssid, ssid, sizeof(prefs_Obj.ssid) - 1);
-    //     strncpy(prefs_Obj.password, password, sizeof(prefs_Obj.password) - 1);
-
-    //       if (strlen(prefs_Obj.ssid) > 0){
-    //         if(nm.writePrefs()) {
-    //           Serial.printf("ssid: %s password: %s", prefs_Obj.ssid, prefs_Obj.password);
-    //           request->send(200, "text/plain", "WiFi credentials saved. Rebooting...");
-    //           DefaultHeaders::Instance().addHeader("Connection", "close");
-
-    //           xTaskCreate([](void*){
-    //             vTaskDelay(pdMS_TO_TICKS(1000));
-    //             ESP.restart();
-    //           }, "reboot_task", 2048, NULL, 5, NULL);
-    //         } else {
-    //           Serial.println("ssid or password is valid or null.");
-    //         }
-
-    //         vTaskDelay(500);
-    //       } else {
-    //         request->send(200, "text/plain", "Failed to write to NVM");
-    //       }
-    //   } else {
-    //     request->send(200, "text/plain", "Missing SSID or Password");
-    //   }
-
-    // });
-
-    // ########################################################################################
-    // # ROUTER FOR MANAGE LOGIN AND CHANGE USERNAME, PASSWORD ,CHECK TOKEN LOGIN, UPLOADFILE #
-    // ########################################################################################
-
-    if(isConnectSDcard) {
-
-      server.on("/", HTTP_GET, [](AsyncWebServerRequest *request) {
-        request->redirect("/index.html");
-      });
-
-      server.serveStatic("/", SD, "/WEB_Source/");
-      server.serveStatic("/pageUploadFile/", SD, "/WEB_Source/");
-      server.serveStatic("/controlPanel/", SD, "/WEB_Source/");
-    }
-
-    server.on("/api/signin", HTTP_OPTIONS, [](AsyncWebServerRequest *request) {
+      server.on("/api/signin", HTTP_OPTIONS, [](AsyncWebServerRequest *request)
+                {
       AsyncWebServerResponse* response = request->beginResponse(200);
       response->addHeader("Access-Control-Allow-Origin", "*");
       response->addHeader("Access-Control-Allow-Methods", "POST, GET, OPTIONS");
       response->addHeader("Access-Control-Allow-Headers", "Content-Type");
-      request->send(response);
-    });
+      request->send(response); });
 
-    // ---------------------------------------------------------
-    // 2. API: /api/signin
-    // ---------------------------------------------------------
-    server.on("/api/signin", HTTP_POST, 
-    [](AsyncWebServerRequest *request) {
+      // // ---------------------------------------------------------
+      // // 2. API: /api/signin
+      // // ---------------------------------------------------------
+      server.on("/api/signin", HTTP_POST, [](AsyncWebServerRequest *request)
+                {
         if (request->_tempObject != NULL) {
             String* res = (String*)request->_tempObject;
             AsyncWebServerResponse* response = request->beginResponse(200, "application/json", *res);
@@ -400,10 +417,8 @@ void NetworkManager::startAdminMode() {
             request->send(response);
             delete res;
             request->_tempObject = NULL;
-        }
-    },
-    NULL,
-    [](AsyncWebServerRequest *request, uint8_t *data, size_t len, size_t index, size_t total) {
+        } }, NULL, [](AsyncWebServerRequest *request, uint8_t *data, size_t len, size_t index, size_t total)
+                {
         JsonDocument doc;
         DeserializationError error = deserializeJson(doc, (const char*)data);
         String* responseBody = new String();
@@ -448,22 +463,21 @@ void NetworkManager::startAdminMode() {
                 *responseBody = "{\"status\":false, \"msg\":\"Please enter your username and password\"}";
             }
         }
-        request->_tempObject = responseBody;
-    });
+        request->_tempObject = responseBody; });
 
-    server.on("/api/changeuser", HTTP_OPTIONS, [](AsyncWebServerRequest *request) {
+      server.on("/api/changeuser", HTTP_OPTIONS, [](AsyncWebServerRequest *request)
+                {
       AsyncWebServerResponse* response = request->beginResponse(200);
       response->addHeader("Access-Control-Allow-Origin", "*");
       response->addHeader("Access-Control-Allow-Methods", "POST, GET, OPTIONS");
       response->addHeader("Access-Control-Allow-Headers", "Content-Type");
-      request->send(response);
-    });
+      request->send(response); });
 
-    // ---------------------------------------------------------
-    // 3. API: /api/signup
-    // ---------------------------------------------------------
-    server.on("/api/changeuser", HTTP_POST, 
-    [](AsyncWebServerRequest *request) {
+      // // ---------------------------------------------------------
+      // // 3. API: /api/signup
+      // // ---------------------------------------------------------
+      server.on("/api/changeuser", HTTP_POST, [](AsyncWebServerRequest *request)
+                {
         if (request->_tempObject != NULL) {
             String* res = (String*)request->_tempObject;
             AsyncWebServerResponse* response = request->beginResponse(200, "application/json", *res);
@@ -471,10 +485,8 @@ void NetworkManager::startAdminMode() {
             request->send(response);
             delete res;
             request->_tempObject = NULL;
-        }
-    },
-    NULL,
-    [](AsyncWebServerRequest *request, uint8_t *data, size_t len, size_t index, size_t total) {
+        } }, NULL, [](AsyncWebServerRequest *request, uint8_t *data, size_t len, size_t index, size_t total)
+                {
         JsonDocument doc;
         DeserializationError error = deserializeJson(doc, (const char*)data);
         String* responseBody = new String();
@@ -497,22 +509,21 @@ void NetworkManager::startAdminMode() {
                 *responseBody = "{\"status\":false, \"msg\":\"Please enter your username and password\"}";
             }
         }
-        request->_tempObject = responseBody;
-    });
+        request->_tempObject = responseBody; });
 
-    server.on("/api/checkToken", HTTP_OPTIONS, [](AsyncWebServerRequest *request) {
+      server.on("/api/checkToken", HTTP_OPTIONS, [](AsyncWebServerRequest *request)
+                {
       AsyncWebServerResponse* response = request->beginResponse(200);
       response->addHeader("Access-Control-Allow-Origin", "*");
       response->addHeader("Access-Control-Allow-Methods", "POST, GET, OPTIONS");
       response->addHeader("Access-Control-Allow-Headers", "Content-Type");
-      request->send(response);
-    });
+      request->send(response); });
 
-    // ---------------------------------------------------------
-    // 4. API: /api/checkToken
-    // ---------------------------------------------------------
-    server.on("/api/checkToken", HTTP_POST, 
-    [](AsyncWebServerRequest *request) {
+      // // ---------------------------------------------------------
+      // // 4. API: /api/checkToken
+      // // ---------------------------------------------------------
+      server.on("/api/checkToken", HTTP_POST, [](AsyncWebServerRequest *request)
+                {
         if (request->_tempObject != NULL) {
             String* res = (String*)request->_tempObject;
             AsyncWebServerResponse* response = request->beginResponse(200, "application/json", *res);
@@ -520,10 +531,7 @@ void NetworkManager::startAdminMode() {
             request->send(response);
             delete res;
             request->_tempObject = NULL;
-        }
-    },
-    NULL,
-    [](AsyncWebServerRequest *request, uint8_t *data, size_t len, size_t index, size_t total) {
+        } }, NULL, [](AsyncWebServerRequest *request, uint8_t *data, size_t len, size_t index, size_t total) {
         JsonDocument doc;
         DeserializationError error = deserializeJson(doc, (const char*)data);
         String* responseBody = new String();
@@ -548,145 +556,220 @@ void NetworkManager::startAdminMode() {
                 *responseBody = "{\"status\":false, \"msg\":\"Please log in again.\"}";
             }
         }
-        request->_tempObject = responseBody;
+        request->_tempObject = responseBody; });
+
+      server.on("/uploadfile", HTTP_POST, [](AsyncWebServerRequest *request) {
+
+        if (uploadState.inProgress) {
+          if (uploadState.file) {
+            uploadState.file.close();
+          }
+          uploadState.inProgress = false;
+        }
+    
+        request->send(200, "text/plain", "successfull.");
+        Serial.printf("✓ Upload finished: %s (%d bytes)\n", uploadState.filename.c_str(), uploadState.totalBytes);
+        Serial.printf("Free heap: %d bytes\n", ESP.getFreeHeap()); 
+      
+      }, [](AsyncWebServerRequest *request, String filename, size_t index, uint8_t *data, size_t len, bool final) {
+        if (!index) {
+
+          Serial.printf("Upload start %s\n", filename.c_str());
+          Serial.printf("Heap before upload %d byte \n", ESP.getFreeHeap());
+
+          if (xSemaphoreTake(sdSemaphore, pdMS_TO_TICKS(2000)) != pdTRUE) {
+            Serial.println("✗ Failed to get SD semaphore");
+            request->send(500, "text/plain", "SD busy");
+            return;
+          }
+
+          String filePath;
+          if (filename.endsWith(".jpg") || filename.endsWith(".jpeg") || filename.endsWith(".png") || filename.endsWith(".gif")) {
+            filePath = "/main/Pictures/" + filename;
+          }
+          else if (filename.endsWith(".mp3") || filename.endsWith(".wav")) {
+            filePath = "/main/Musics/" + filename;
+          }
+          else if (filename.equals("wifiManager.html")) {
+            filePath = "/WEB_Source/WiFiManger/" + filename;
+          }
+          else if (filename.endsWith(".html") || filename.endsWith(".js") || filename.endsWith(".css")) {
+            filePath = "/WEB_Source/" + filename;
+          }
+          else {
+            filePath = "/main/" + filename;
+          }
+
+          // Delete existing file
+          xSemaphoreTake(sdSemaphore, pdMS_TO_TICKS(200));
+          if (SD.exists(filePath)) {
+            SD.remove(filePath);
+            delay(10);
+          }
+          xSemaphoreGive(sdSemaphore);
+
+          xSemaphoreTake(sdSemaphore, pdMS_TO_TICKS(200));
+          uploadState.file = SD.open(filePath, FILE_WRITE);
+          xSemaphoreGive(sdSemaphore);
+
+          if (!uploadState.file) {
+            Serial.println("✗ Failed to open file for writing");
+            if (xSemaphoreTake(displaySemaphore, pdMS_TO_TICKS(100)) == pdTRUE)
+            {
+              tft.println("✗ Failed to open file for writing");
+              xSemaphoreGive(displaySemaphore);
+            }
+            xSemaphoreGive(sdSemaphore);
+            request->send(500, "text/plain", "File open failed");
+            return;
+          }
+
+          uploadState.inProgress = true;
+          uploadState.totalBytes = 0;
+          uploadState.lastUpdate = millis();
+          uploadState.filename = filename;
+
+          Serial.printf("→ Writing to: %s\n", filePath.c_str());
+        }
+
+        if (len && uploadState.inProgress) {
+          size_t written = uploadState.file.write(data, len);
+
+          if (written != len) {
+            Serial.printf("✗ Write error: %d/%d bytes\n", written, len);
+          }
+
+          uploadState.totalBytes += written;
+
+          // Progress update every 100KB
+          if (uploadState.totalBytes % 102400 < len) {
+            Serial.printf("  %d KB...\n", uploadState.totalBytes / 1024);
+          }
+
+          // CRITICAL: Reset watchdog periodically
+          if (millis() - uploadState.lastUpdate > 1000) {
+            uploadState.lastUpdate = millis();
+          }
+        }
+
+        if (final && uploadState.inProgress) {
+          uploadState.file.close();
+          uploadState.inProgress = false;
+          xSemaphoreGive(sdSemaphore);
+          Serial.printf("✓ Upload complete: %.2f MB\n", (float)uploadState.totalBytes / (1024.0 * 1024.0));
+          Serial.println("Upload complete");
+          Serial.printf("Heap after upload: %d bytes\n", ESP.getFreeHeap());
+          // if (filename.equals("index.html")) controlRes = true;
+        }
+
+      request->redirect("/WEB_Source/uploadFile.html"); 
     });
 
-  server.on("/uploadfile", HTTP_POST, [](AsyncWebServerRequest *request) {
+      server.serveStatic("/", SD, "/");
 
-    if (uploadState.inProgress) {
-        if (uploadState.file) {
-          uploadState.file.close();
-        }
-        uploadState.inProgress = false;
+      server.onNotFound([](AsyncWebServerRequest *request) { 
+          request->send(200, "text/plain", "Not found");
+      });
+
+      websocket.onEvent(onWsEvent);
+      server.addHandler(&websocket);
+
+      server.begin();
+      Serial.printf("Free heap after setup: %d bytes\n", ESP.getFreeHeap());
+      Serial.printf("install Webserver Successfully.\n");
+      isNetwork_install = true;
+      isServerConfigured = true;
     }
-    
-    request->send(200, "text/plain", "successfull.");
-    Serial.printf("✓ Upload finished: %s (%d bytes)\n",
-                  uploadState.filename.c_str(),
-                  uploadState.totalBytes);
-    Serial.printf("Free heap: %d bytes\n", ESP.getFreeHeap());
-  }, [](AsyncWebServerRequest *request, String filename, size_t index, uint8_t *data, size_t len, bool final) {
-
-    if (!index) {
-
-      Serial.printf("Upload start %s\n", filename.c_str());
-      Serial.printf("Heap before upload %d byte \n", ESP.getFreeHeap());
-
-      if (xSemaphoreTake(sdSemaphore, pdMS_TO_TICKS(2000)) != pdTRUE) {
-          Serial.println("✗ Failed to get SD semaphore");
-          request->send(500, "text/plain", "SD busy");
-          return;
-      }
-
-      String filePath;
-      if (filename.endsWith(".jpg") || filename.endsWith(".jpeg") || 
-          filename.endsWith(".png") || filename.endsWith(".gif")) {
-        filePath = "/main/Pictures/" + filename;
-      } else if (filename.endsWith(".mp3") || filename.endsWith(".wav")) {
-        filePath = "/main/Musics/" + filename;
-      } else if(filename.equals("wifiManager.html")) {
-        filePath = "/WEB_Source/WiFiManger/" + filename;
-      } else if (filename.endsWith(".html") || filename.endsWith(".js") || 
-                  filename.endsWith(".css")) {
-        filePath = "/WEB_Source/" + filename;
-      } else {
-        filePath = "/main/" + filename;
-      }
-        
-      // Delete existing file
-      if (SD.exists(filePath)) {
-        SD.remove(filePath);
-        delay(10);
-      }
-
-      uploadState.file = SD.open(filePath, FILE_WRITE);
-
-      if (!uploadState.file) {
-        Serial.println("✗ Failed to open file for writing");
-        if(xSemaphoreTake(displaySemaphore, pdMS_TO_TICKS(100)) == pdTRUE) {
-          tft.println("✗ Failed to open file for writing");
-          xSemaphoreGive(displaySemaphore);
-        }
-        xSemaphoreGive(sdSemaphore);
-        request->send(500, "text/plain", "File open failed");
-        return;
-      }
-
-      uploadState.inProgress = true;
-      uploadState.totalBytes = 0;
-      uploadState.lastUpdate = millis();
-      uploadState.filename = filename;
-
-      Serial.printf("→ Writing to: %s\n", filePath.c_str());
-    }
-
-    if (len && uploadState.inProgress) {
-      size_t written = uploadState.file.write(data, len);
-
-      if (written != len) {
-        Serial.printf("✗ Write error: %d/%d bytes\n", written, len);
-      }
-
-      uploadState.totalBytes += written;
-
-      // Progress update every 100KB
-      if (uploadState.totalBytes % 102400 < len) {
-        Serial.printf("  %d KB...\n", uploadState.totalBytes / 1024);
-      }
-
-      // CRITICAL: Reset watchdog periodically
-      if (millis() - uploadState.lastUpdate > 1000) {
-        uploadState.lastUpdate = millis();
-      }
-    }
-
-    if (final && uploadState.inProgress) {
-      uploadState.file.close();
-      uploadState.inProgress = false;
-      xSemaphoreGive(sdSemaphore);
-      Serial.printf("✓ Upload complete: %.2f MB\n", (float)uploadState.totalBytes / (1024.0 * 1024.0));
-      Serial.println("Upload complete");
-      Serial.printf("Heap after upload: %d bytes\n", ESP.getFreeHeap());
-      // if (filename.equals("index.html")) controlRes = true;
-    }
-
-    request->redirect("/WEB_Source/uploadFile.html");
-      
-  });
-
-  server.serveStatic("/", SD, "/");
-    
-  server.onNotFound([](AsyncWebServerRequest *request) {
-    request->send(200, "text/plain", "Not found");
-  });
-
-  ElegantOTA.begin(&server);    // Start ElegantOTA
-  // ElegantOTA callbacks
-  ElegantOTA.onStart(onOTAStart);
-  ElegantOTA.onProgress(onOTAProgress);
-  ElegantOTA.onEnd(onOTAEnd);
-
-  isNetwork_install = true;
-
-  server.begin();
-  Serial.printf("Free heap after setup: %d bytes\n", ESP.getFreeHeap());
-
 }
 
 void NetworkManager::stopAdminMode() {
-  dnsServer.stop();
   server.end();
-  WiFi.disconnect(true);
+  dnsServer.stop();
+  WiFi.softAPdisconnect(true);
   WiFi.mode(WIFI_OFF);
   Serial.println("Admin Mode Stopped. RAM Freed!");
 }
 
+void handleWebSocketMessage(AsyncWebSocketClient *client, void *arg, uint8_t *data, size_t len) {
+    AwsFrameInfo *info = (AwsFrameInfo*)arg;
+    
+    if (info->final && info->index == 0 && info->len == len && info->opcode == WS_TEXT) {
+        
+        // 🌟 วิธีแปลงข้อมูลที่ปลอดภัย ไม่เสี่ยง Buffer Overflow
+        String msg((char*)data, len);
+        
+        JsonDocument doc;
+        DeserializationError error = deserializeJson(doc, msg);
+        if (error) {
+            Serial.println("WS JSON Error!");
+            return;
+        }
+
+        String action = doc["action"] | "";
+        String path = doc["path"] | "";
+        String responseMsg;
+        bool res = false;
+
+        if (action == "scan") {
+            String jsonStr = file_card.getFileListJSON(path);
+            // 🌟 ส่งกลับไปเฉพาะ Client ที่ร้องขอมาเท่านั้น ไม่ใช้ textAll()
+            client->text(jsonStr); 
+            return; 
+        } 
+        else if (action == "create") {
+            String type = doc["type"] | "file";
+            res = (type == "folder") ? file_card.createFolder(path) : file_card.createFile(path);
+        }
+        else if (action == "delete") {
+            res = file_card.deleteFile(path);
+        }
+        else if (action == "rename" || action == "move") { 
+            String newPath = doc["newPath"] | "";
+            res = file_card.renameFile(path, newPath);
+        }
+        else if (action == "update") {
+            String content = doc["content"] | "";
+            res = file_card.updateFile(path, content);
+        }
+
+        // 🌟 ส่งกลับเฉพาะคนสั่ง
+        responseMsg = "{\"action\":\"" + action + "\", \"path\":\"" + path + "\", \"status\":" + String(res ? "true" : "false") + "}";
+        client->text(responseMsg);
+        
+        Serial.println("WS Action: " + action + " | Status: " + String(res ? "Success" : "Failed"));
+    }
+}
+
+void onWsEvent(AsyncWebSocket *server, AsyncWebSocketClient *client, AwsEventType type, void *arg, uint8_t *data, size_t len) {
+    if (type == WS_EVT_CONNECT) {
+        Serial.printf("WS Client connected: %u\n", client->id());
+        
+        // 🌟 กฎเหล็ก: มี Admin ได้แค่คนเดียวเท่านั้น!
+        // ลูปหา Client ตัวอื่นๆ ที่ค้างอยู่ในระบบ แล้วเตะทิ้งเพื่อคืน RAM
+        for (auto& c : server->getClients()) {
+            // ใช้ จุด (.) แทนลูกศร (->) เพราะมันเป็น Object ไม่ใช่ Pointer
+            if (c.id() != client->id()) { 
+                Serial.printf("Kicking old zombie client: %u to save RAM!\n", c.id());
+                c.close(); 
+            }
+        }
+    } else if (type == WS_EVT_DISCONNECT) {
+        Serial.printf("WS Client disconnected: %u\n", client->id());
+    } else if (type == WS_EVT_DATA) {
+        handleWebSocketMessage(client, arg, data, len);
+    }
+}
+
 void runNet(void* pvParameter) {
   for(;;) {
-    ElegantOTA.loop();
-    if(WiFi.getMode() == WIFI_MODE_AP) {
-      dnsServer.processNextRequest();
+
+    if(isNetwork_install){
+      if(WiFi.getMode() == WIFI_MODE_AP) {
+        dnsServer.processNextRequest();
+      }
+       websocket.cleanupClients();
     }
-    vTaskDelay(pdMS_TO_TICKS(500));
+
+    vTaskDelay(pdMS_TO_TICKS(50));
   }
 }

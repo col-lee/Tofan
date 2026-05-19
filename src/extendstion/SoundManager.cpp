@@ -1,11 +1,11 @@
 #include "SoundManager.hpp"
+#include "DisplayManager.hpp"
 #include "FileManager.hpp"
 #include "Network.hpp"
 #include <ArduinoJson.h>
 
 Audio audio;
 bool isAudio_install;
-volatile int encoderValue = 50;
 
 // เพิ่มบรรทัดนี้เพื่อจำ Path ไฟล์ที่เล่นล่าสุด
 String currentFilePath = ""; 
@@ -14,16 +14,81 @@ String currentSongTitle = "Unknown";
 uint32_t currentAudioTime = 0;
 uint32_t totalAudioDuration = 0;
 
+bool isPlayingAudio = false; 
+int currentAudioProgress = 0; 
+unsigned long lastProgressUpdate = 0;
+bool autoPlayNext = false;
+
+const int MAX_STATIONS = 3;
+String onlineStations[MAX_STATIONS] = {
+    "http://stream.radioparadise.com/aac-128",      // สถานีที่ 1: Radio Paradise
+    "http://ice1.somafm.com/groovesalad-128-mp3",   // สถานีที่ 2: SomaFM (Chill)
+    "http://lofi.stream.laut.fm/lofi"
+};
+
+int currentStationIndex = 2;
+
 void initAudio(){
   Serial.printf("Audio Task started on Core %d\n", xPortGetCoreID());
-  audio.setPinout(BLCK_PIN, RLC_PIN, DIN_PIN);
+  if(audio.setPinout(BLCK_PIN, RLC_PIN, DIN_PIN)) {
+    Serial.println("installed audio.");
+    isAudio_install = true;
+  } else {
+    Serial.println("install audio failed.");
+  }
   audio.setVolume(50);
-  isAudio_install = true;
 
-  // if (xSemaphoreTake(sdSemaphore, pdMS_TO_TICKS(500)) == pdTRUE) {
-  //   audio.connecttoFS(SD, "/main/Musics/Exil_-_Hiboky.mp3");
-  //   xSemaphoreGive(sdSemaphore);
-  // }
+  if (xSemaphoreTake(sdSemaphore, pdMS_TO_TICKS(500)) == pdTRUE) {
+    audio.connecttoFS(SD, "/main/Musics/ใจรัก.mp3");
+    xSemaphoreGive(sdSemaphore);
+  }
+}
+
+void initMicrophone() {
+  i2s_config_t mic_config = {
+        .mode = (i2s_mode_t)(I2S_MODE_MASTER | I2S_MODE_RX),
+        .sample_rate = SAMPLE_RATE,
+        .bits_per_sample = I2S_BITS_PER_SAMPLE_32BIT, // ไมค์ INMP441 ส่งมาเป็น 32-bit
+        .channel_format = I2S_CHANNEL_FMT_ONLY_LEFT,
+        .communication_format = I2S_COMM_FORMAT_STAND_I2S,
+        .intr_alloc_flags = ESP_INTR_FLAG_LEVEL1,
+        .dma_buf_count = 8,
+        .dma_buf_len = 64,
+        .use_apll = false,
+        .tx_desc_auto_clear = false,
+        .fixed_mclk = 0
+    };
+
+    i2s_pin_config_t mic_pins = {
+        .bck_io_num = MIC_SCK_PIN,
+        .ws_io_num = MIC_WS_PIN,
+        .data_out_num = I2S_PIN_NO_CHANGE, 
+        .data_in_num = MIC_SD_PIN
+    };
+
+    i2s_driver_install(MIC_I2S_PORT, &mic_config, 0, NULL);
+    i2s_set_pin(MIC_I2S_PORT, &mic_pins);
+}
+
+void readMicData() {
+    int32_t sample32 = 0; 
+    int16_t sample16 = 0;
+    size_t bytes_read;
+
+    // 1. อ่านข้อมูลเสียงแบบ 32-bit จากพอร์ต 1
+    esp_err_t result = i2s_read(MIC_I2S_PORT, &sample32, sizeof(sample32), &bytes_read, portMAX_DELAY);
+
+    if (result == ESP_OK && bytes_read > 0) {
+        // 2. แปลงข้อมูลจาก 32-bit ให้เป็น 16-bit (เพื่อตัดบิตขยะทิ้งและลดขนาดตัวเลข)
+        // INMP441 มักจะส่งข้อมูลมาที่บิตบนๆ การเลื่อนบิต (Bit Shift) >> 14 จะได้ค่า 16-bit ที่พอดี
+        sample16 = sample32 >> 14; 
+
+        // 3. กรองสัญญาณรบกวนจุกจิก (ถ้าไมค์ไม่มีเสียง มันมักจะพ่น 0 หรือ -1 ออกมา)
+        if (sample16 != 0 && sample16 != -1) {
+            // 4. พ่นค่าออกทาง Serial
+            Serial.println(sample16);
+        }
+    }
 }
 
 void handleAudio(void *parameter) {
@@ -39,61 +104,60 @@ void handleAudio(void *parameter) {
   unsigned long lastWsUpdate = 0;
   
   for(;;) {
-    unsigned long now = millis();
-    
-    // 1. รับคำสั่งจาก Queue (WebSocket)
+    // 1. รับคำสั่งจาก Queue (รองรับระบบเดิม)
     if (xQueueReceive(audio_command, &cmd, 0) == pdPASS) {
       if (cmd.module == AUDIO_COMMAND::MODULE::AUDIO) {
-        
         switch (cmd.audio_state) {
           case AUDIO_COMMAND::AUDIO_STATE::PLAY:
             if(cmd.path != "" && cmd.path != "null") {
-              currentFilePath = cmd.path; // จำ Path ไว้
-              if(xSemaphoreTake(sdSemaphore, pdMS_TO_TICKS(500)) == pdTRUE) {
-                  audio.stopSong(); 
-                  audio.connecttoFS(SD, currentFilePath.c_str()); 
-                  xSemaphoreGive(sdSemaphore);
+              currentFilePath = cmd.path; 
+              audio.pauseResume();
+              audio.stopSong(); 
+
+              if (currentFilePath.startsWith("http://") || currentFilePath.startsWith("https://")) {
+                  audio.connecttohost(currentFilePath.c_str());
+                  currentSongTitle = "Connecting..."; // ตั้งชื่อรอไว้ก่อน
+              } else {
+                  // 👉 โหมด SD Card (ทำงานเหมือนเดิมเป๊ะ)
+                  if(xSemaphoreTake(sdSemaphore, pdMS_TO_TICKS(500)) == pdTRUE) {
+                    audio.connecttoSD(currentFilePath.c_str());
+                    xSemaphoreGive(sdSemaphore);
+                  }
+                  
+                  int lastSlashIndex = cmd.path.lastIndexOf('/');
+                  if (lastSlashIndex >= 0) {
+                      currentSongTitle = cmd.path.substring(lastSlashIndex + 1);
+                  } else {
+                      currentSongTitle = cmd.path; 
+                  }
               }
-              currentSongTitle = cmd.path; 
-            } 
+              
+            }
             else {
-              if (currentState == STATE_PAUSED) {
-                  audio.pauseResume(); // เล่นต่อจากเดิม
-              } 
+              if (currentState == STATE_PAUSED) audio.pauseResume();
             }
             currentState = STATE_PLAYING;
-            
-            // ✅ ส่งบอกเว็บทันทีว่า "กำลังเล่นนะ" (ไอคอนจะได้เปลี่ยนทันที)
-            {
-                JsonDocument doc;
-                doc["type"] = "audio_status";
-                doc["state"] = "playing";
-                doc["title"] = currentSongTitle;
-                String jsonStr;
-                serializeJson(doc, jsonStr);
-                websocket.textAll(jsonStr);
-            }
+            isPlayingAudio = true;
             break;
             
           case AUDIO_COMMAND::AUDIO_STATE::PUASE:
             if(currentState == STATE_PLAYING) {
               audio.pauseResume();
               currentState = STATE_PAUSED;
-              
-              // 🚨 พระเอกของเราอยู่ตรงนี้: ส่งบอกเว็บว่า "พักเพลงแล้วนะ"
-              JsonDocument doc;
-              doc["type"] = "audio_status";
-              doc["state"] = "paused";
-              doc["currentTime"] = audio.getAudioCurrentTime();
-              String jsonStr;
-              serializeJson(doc, jsonStr);
-              websocket.textAll(jsonStr);
+              isPlayingAudio = false;
             }
             break;
 
           case AUDIO_COMMAND::AUDIO_STATE::SEEK:
-            audio.setAudioPlayPosition(cmd.seek_time);
+            audio.audioFileSeek(cmd.seek_time);
             currentState = STATE_PLAYING;
+            isPlayingAudio = true;
+            break;
+            
+          case AUDIO_COMMAND::AUDIO_STATE::STOP:
+            audio.stopSong();
+            currentState = STATE_STOPPED;
+            isPlayingAudio = false;
             break;
         }
       }
@@ -101,58 +165,37 @@ void handleAudio(void *parameter) {
     
     // 2. ลูปการทำงานของ Audio
     if (isConnectSDcard) {
-      
       if (currentState == STATE_PLAYING) {
-        // เอาดีเลย์ 5ms ออกแล้ว ให้ audio.loop() ทำงานตลอดเวลาเพื่อป้องกันเพลงกระตุก
         if(xSemaphoreTake(sdSemaphore, pdMS_TO_TICKS(5)) == pdTRUE) {
             audio.loop(); 
             xSemaphoreGive(sdSemaphore);
         }
       }
       
-      // 3. จัดการ Volume ผ่าน Rotary Encoder
-      if (now - lastVolumeUpdate >= 100) {
-        int newVolume = encoderValue;
-        if (abs(newVolume - volume) >= 1) {
-          volume = newVolume;
-          audio.setVolume(volume);
+      // 3. อัปเดต % ความคืบหน้าเพลงสำหรับ UI
+
+      if (currentState == STATE_PLAYING && (millis() - lastProgressUpdate >= 1000)) {
+            totalAudioDuration = audio.getAudioFileDuration();
+            currentAudioTime = audio.getAudioCurrentTime(); // 🌟 ดึงเวลาปัจจุบันมาเก็บไว้
+            
+            if(totalAudioDuration > 0) {
+                currentAudioProgress = (currentAudioTime * 100) / totalAudioDuration;
+            }
+            lastProgressUpdate = millis();
         }
-        lastVolumeUpdate = now;
-      }
-
-      // 4. ส่งข้อมูลสถานะปัจจุบันกลับไปยัง WebSocket (ทุกๆ 1 วินาที เฉพาะตอนเล่นเพลง)
-      if (currentState == STATE_PLAYING && (now - lastWsUpdate >= 1000)) {
-          currentAudioTime = audio.getAudioCurrentTime();
-          totalAudioDuration = audio.getAudioFileDuration();
-
-          JsonDocument doc;
-          doc["type"] = "audio_status";
-          doc["state"] = "playing";
-          doc["title"] = currentSongTitle;
-          doc["currentTime"] = currentAudioTime;
-          doc["duration"] = totalAudioDuration;
-          doc["volume"] = volume;
-
-          String jsonStr;
-          serializeJson(doc, jsonStr);
-          websocket.textAll(jsonStr); // บรอดแคสต์ข้อมูลให้หน้าเว็บทั้งหมด
-          
-          lastWsUpdate = now;
+    } else {
+      if(currentState == STATE_PLAYING) {
+        audio.loop();
       }
     }
     
-    // พัก Task ตามสถานะ (ถ้าเล่นอยู่พักน้อยมาก ถ้าหยุดแล้วให้พักเยอะได้)
     if(currentState == STATE_STOPPED || currentState == STATE_PAUSED) {
-      vTaskDelay(pdMS_TO_TICKS(20));
+      vTaskDelay(pdMS_TO_TICKS(500));
     } else {
       vTaskDelay(pdMS_TO_TICKS(1)); 
     }
   }
 }
-
-// =========================================================
-// Audio Callback Functions ( ฟังก์ชันอัตโนมัติจากไลบรารีI2S)
-// =========================================================
 
 void audio_info(const char *info){
     Serial.print("Audio Info: ");
@@ -170,12 +213,6 @@ void audio_id3data(const char *info){
         currentSongTitle = id3.substring(7); // ตัดคำว่า "Title: " ออก
         
         // อัปเดตชื่อเพลงกลับไปที่ Web ทันที
-        JsonDocument doc;
-        doc["type"] = "audio_meta";
-        doc["title"] = currentSongTitle;
-        String jsonStr;
-        serializeJson(doc, jsonStr);
-        websocket.textAll(jsonStr);
     }
 }
 
@@ -185,10 +222,5 @@ void audio_eof_mp3(const char *info){
     Serial.println(info);
     
     // แจ้งเตือนหน้าเว็บว่าเพลงหยุดแล้ว (หรือคุณสามารถเขียนโค้ด Auto-play เพลงถัดไปตรงนี้ได้)
-    JsonDocument doc;
-    doc["type"] = "audio_status";
-    doc["state"] = "stopped";
-    String jsonStr;
-    serializeJson(doc, jsonStr);
-    websocket.textAll(jsonStr);
+    autoPlayNext = true;
 }

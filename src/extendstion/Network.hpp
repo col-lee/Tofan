@@ -10,8 +10,13 @@
     #include <Preferences.h>
     #include <DNSServer.h>
     #include <ESPmDNS.h>
-    #include <ElegantOTA.h>
     #include <stdlib.h>
+
+typedef struct {
+    char ssid[32] = "";
+    char password[32] = "";
+} PrefsObj_WiFiManager; // object for get ssid and password
+
 #endif
 
 extern AsyncWebServer server;
@@ -30,6 +35,9 @@ public:
     bool readUsername();
     bool clearUsername();
     bool connectoWiFi(const char *ssid, const char *password);
+    bool connectoWiFi();
+    void startAPMode();
+    void closeWiFiSTA();
     void generateToken(char* token, int length);
     void writeLog(String &log);
     void startAdminMode();
@@ -37,6 +45,8 @@ public:
 };
 
 void runNet(void* pvParameter);
+void handleWebSocketMessage(AsyncWebSocketClient *client, void *arg, uint8_t *data, size_t len);
+void onWsEvent(AsyncWebSocket *server, AsyncWebSocketClient *client, AwsEventType type, void *arg, uint8_t *data, size_t len);
 
 extern NetworkManager nm;
 

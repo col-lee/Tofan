@@ -10,17 +10,44 @@
 #endif
 
 #ifndef SD_H
-#define SD_h
+#define SD_H
     #include <SD.h>
 #endif
 
-#ifndef TFT_eSPI_H
-#define TFT_eSPI_H
-    #include <TFT_eSPI.h>
-#endif
+#ifndef LGFX_H
+#define LGFX_H
+    #include <LovyanGFX.hpp>
 
-#if defined (TFT_eSPI_H)
-    extern TFT_eSPI tft;
+class LGFX : public lgfx::LGFX_Device
+{
+    lgfx::Panel_ST7789 _panel_instance;
+    lgfx::Bus_SPI _bus_instance;
+
+public:
+    LGFX()
+    {
+        auto cfg = _bus_instance.config();
+        cfg.spi_host = SPI3_HOST; // ใช้ Bus 3 สำหรับจอ
+        cfg.pin_sclk = 39;
+        cfg.pin_mosi = 38;
+        cfg.pin_dc = 41;
+        cfg.freq_write = 80000000;
+        _bus_instance.config(cfg);
+        _panel_instance.setBus(&_bus_instance);
+        auto p_cfg = _panel_instance.config();
+        p_cfg.pin_cs = 40;
+        p_cfg.pin_rst = 42;
+        p_cfg.panel_width = 240;
+        p_cfg.panel_height = 320;
+        p_cfg.invert = true;
+        // p_cfg.rgb_order = false;
+        _panel_instance.config(p_cfg);
+        setPanel(&_panel_instance);
+    }
+};
+
+    extern class LGFX tft;
+    extern LGFX_Sprite spr;
 #endif
 
 #if defined (ARDUINO_H)
@@ -36,10 +63,6 @@
     extern QueueHandle_t audio_command;
     extern QueueHandle_t api_event_queue;
     extern QueueHandle_t fileMg;
-#endif
-
-#if defined (SPI_H)
-    extern SPIClass hspi;
 #endif
 
 #ifndef ArduinoJ

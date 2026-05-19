@@ -1,7 +1,7 @@
 #include "FileManager.hpp"
 #include <ArduinoJson.h>
 
-SPIClass vspi(VSPI);
+SPIClass vspi(FSPI);
 SemaphoreHandle_t sdSemaphore;
 bool isConnectSDcard = false;
 bool isFileManager_install;
@@ -18,12 +18,10 @@ FileManager::~FileManager()
 
 void FileManager::initSDCard()
 {
-    pinMode(CS, OUTPUT);
-    digitalWrite(CS, HIGH);
-    vspi.begin(SCL, MISO, MOSI, CS);
-    vspi.setFrequency(8000000);
-    if (SD.begin(CS, vspi, 8000000))
-    {
+    pinMode(SD_CS, OUTPUT);
+    digitalWrite(SD_CS, HIGH);
+    vspi.begin(SD_SCL, SD_MISO, SD_MOSI, SD_CS);
+    if (SD.begin(SD_CS, vspi, 4000000)) {
         isConnectSDcard = true;
         Serial.println("SD mount card.");
         Serial.print("Card size: ");
@@ -113,7 +111,7 @@ String FileManager::getFileListJSON(String dirPath) {
 // 2. ฟังก์ชันสร้างไฟล์
 bool FileManager::createFile(String path) {
     if (!path.startsWith("/main")) return false; // 🚨 บล็อก
-    if (xSemaphoreTake(sdSemaphore, pdMS_TO_TICKS(500)) == pdTRUE) {
+    if (xSemaphoreTake(sdSemaphore, pdMS_TO_TICKS(200)) == pdTRUE) {
         File f = SD.open(path, FILE_WRITE);
         if(f) { f.close(); xSemaphoreGive(sdSemaphore); return true; }
         xSemaphoreGive(sdSemaphore);
@@ -126,7 +124,7 @@ bool FileManager::deleteFile(String path) {
     // 🚨 บล็อก และ ห้ามลบโฟลเดอร์ /main ทิ้งเด็ดขาด!
     if (!path.startsWith("/main") || path == "/main") return false; 
     
-    if (xSemaphoreTake(sdSemaphore, pdMS_TO_TICKS(500)) == pdTRUE) {
+    if (xSemaphoreTake(sdSemaphore, pdMS_TO_TICKS(200)) == pdTRUE) {
         bool res;
         File f = SD.open(path);
         if(f && f.isDirectory()) {
@@ -147,10 +145,33 @@ bool FileManager::renameFile(String oldPath, String newPath) {
     // 🚨 บล็อกทั้งชื่อเก่าและชื่อใหม่
     if (!oldPath.startsWith("/main") || !newPath.startsWith("/main") || oldPath == "/main") return false;
     
-    if (xSemaphoreTake(sdSemaphore, pdMS_TO_TICKS(500)) == pdTRUE) {
+    if (xSemaphoreTake(sdSemaphore, pdMS_TO_TICKS(200)) == pdTRUE) {
         bool res = SD.rename(oldPath, newPath);
         xSemaphoreGive(sdSemaphore);
         return res;
+    }
+    return false;
+}
+
+// 5. ฟังก์ชันอัปเดต/เขียนทับไฟล์ (สำหรับ WebSocket)
+bool FileManager::updateFile(String path, String content) {
+    if (!path.startsWith("/main")) return false; // 🚨 บล็อกห้ามยุ่งกับไฟล์ระบบ
+    
+    if (xSemaphoreTake(sdSemaphore, pdMS_TO_TICKS(200)) == pdTRUE) {
+        // 🌟 ลบไฟล์เดิมทิ้งก่อน เพื่อให้ไฟล์เริ่มนับ 0 Byte ใหม่เสมอ
+        if (SD.exists(path)) {
+            SD.remove(path);
+        }
+        
+        // ใช้ FILE_WRITE เพื่อสร้างไฟล์และเขียนใหม่
+        File f = SD.open(path, FILE_WRITE); 
+        if(f) { 
+            f.print(content);
+            f.close(); 
+            xSemaphoreGive(sdSemaphore); 
+            return true; 
+        }
+        xSemaphoreGive(sdSemaphore);
     }
     return false;
 }
@@ -159,7 +180,7 @@ bool FileManager::renameFile(String oldPath, String newPath) {
 bool FileManager::createFolder(String path) {
     if (!path.startsWith("/main")) return false; 
     
-    if (xSemaphoreTake(sdSemaphore, pdMS_TO_TICKS(500)) == pdTRUE) {
+    if (xSemaphoreTake(sdSemaphore, pdMS_TO_TICKS(200)) == pdTRUE) {
         bool res = SD.mkdir(path.c_str()); 
         xSemaphoreGive(sdSemaphore);
         return res;

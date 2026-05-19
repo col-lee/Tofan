@@ -2,14 +2,14 @@
 
 #ifndef SD_H
 #define SD_H
-#include "SD.h"
+#include <SD.h>
 #endif
 
 // SDcard pin
-#define MOSI 23
-#define MISO 19 
-#define SCL 18
-#define CS 15
+#define SD_MOSI 11
+#define SD_MISO 13
+#define SD_SCL 12
+#define SD_CS 14
 extern bool isConnectSDcard;
 
 class FileManager
@@ -25,6 +25,7 @@ public:
     bool createFolder(String path);
     bool deleteFile(String path);
     bool renameFile(String oldPath, String newPath);
+    bool updateFile(String path, String content);
 };
 
 #ifndef FILE_CARD
