@@ -2,6 +2,7 @@
 #define ARDUINO_H
     #include <Arduino.h>
     #include "event.hpp"
+    #include "config.hpp"
 #endif
 
 #ifndef SPI_H
@@ -76,6 +77,11 @@ public:
     extern bool isDisplay_install;
     extern bool isAudio_install;
     extern bool isFileManager_install;
+    extern bool isConnectSDcard;
+
+    // Recording state control
+    extern bool isRecordingMode;     // Flag to disable detectWord during recording
+    extern bool isRecording;          // Flag to track actual recording state
 #endif
 
 

@@ -7,6 +7,7 @@
 #include "extendstion/Network.hpp"
 #include "extendstion/SoundManager.hpp"
 #include "extendstion/IOManager.hpp"
+#include "extendstion/HardwareManager.hpp"
 
 #ifndef DISPLAYMANAGER_HH
 #define DISPLAYMANAGER_HH
@@ -32,6 +33,10 @@ QueueHandle_t api_event_queue = NULL;
 NetworkManager nm;
 FileManager file_card;
 
+// Recording state control
+bool isRecordingMode = false;     // Disable detectWord during recording
+bool isRecording = false;          // Track actual recording state
+
 #define ENC_A_PIN 15
 #define ENC_B_PIN  16
 #define ENC_SW  10
@@ -39,12 +44,14 @@ FileManager file_card;
 #define ENC_VCC -1
 #define ENC_STEPS 2
 
-AiEsp32RotaryEncoder rotaryEncoder = AiEsp32RotaryEncoder(ENC_A_PIN, ENC_B_PIN, ENC_SW, ENC_VCC, ENC_STEPS, false);
+AiEsp32RotaryEncoder rotaryEncoder = AiEsp32RotaryEncoder(ENC_A_PIN, ENC_B_PIN, -1, ENC_VCC, ENC_STEPS, false);
  
 unsigned long backBtnPressTime = 0;
 bool isBackBtnLongPressed = false;
 int lastSyncedVol = -1;
 unsigned long lastVolActivityTime = 0;
+
+static unsigned long lastTouchTime = 0;
 
 void IRAM_ATTR readEncoderISR() {
     rotaryEncoder.readEncoder_ISR();
@@ -113,7 +120,8 @@ void handleInput() {
     }
 
     // 2. ตรวจจับปุ่มกด "ตกลง" (SW)
-    if (rotaryEncoder.isEncoderButtonClicked()) {
+    if (digitalRead(ENC_SW) == HIGH && millis() - lastTouchTime > 300) {
+        lastTouchTime = millis();
         
         if (DISM.currentState == UI_STATE::HOME_MENU) {
             DISPLAY_COMMAND cmd;
@@ -170,8 +178,9 @@ void handleInput() {
 
                 case 5:
                     DISM.currentState = UI_STATE::RECORDE;
+                    isRecordingMode = true;  // Disable detectWord
+                    isRecording = false;      // Not recording yet, waiting for user to press button
                     DISM.recorde();
-                    startRecording("/main/Musics/test.wav");
                     break;
                     
             }
@@ -378,6 +387,16 @@ void handleInput() {
         }
 
         else if(DISM.currentState == UI_STATE::RECORDE) {
+            // Toggle recording on/off
+            if (isRecording) {
+                // Stop recording
+                stopRecording();
+                isRecording = false;
+            } else {
+                // Start recording
+                startRecording("/main/Musics/voice_record.wav");
+                isRecording = true;
+            }
             DISM.recorde();
         }
 
@@ -470,6 +489,9 @@ void handleInput() {
 
                 else if(DISM.currentState == UI_STATE::RECORDE) {
                     stopRecording();
+                    isRecordingMode = false;  // Re-enable detectWord
+                    isRecording = false;
+                    DISM.seconds = 0;  // Reset timer
                     rotaryEncoder.setBoundaries(-DISM.boundaries_home, DISM.boundaries_home, false);
                     rotaryEncoder.setEncoderValue(DISM.animatedMenuIndex_target);
                     DISM.currentState = UI_STATE::HOME_MENU;
@@ -521,6 +543,7 @@ void setup() {
   }
 
   pinMode(BTN_BACK, INPUT);
+  pinMode(ENC_SW, INPUT);
 
   sdSemaphore = xSemaphoreCreateMutex();
   displaySemaphore = xSemaphoreCreateMutex();
@@ -544,6 +567,9 @@ void setup() {
   vTaskDelay(pdMS_TO_TICKS(500));
   initMicrophone();
   vTaskDelay(pdMS_TO_TICKS(500));
+
+  // Initialize Hardware Manager
+  hwManager.initDevices();
 
   BaseType_t task1 = xTaskCreatePinnedToCore(handleAudio, "handleAudio", 4 * 1024, NULL, 4, &t_handleAudio, 0);
   BaseType_t netWorkTask = xTaskCreatePinnedToCore(runNet, "runNet",  4 * 1024, NULL, 3, &runnet, 0);
@@ -710,25 +736,8 @@ void loop() {
         vTaskDelay(1);
     }
 
-    detectWord();
-
-    // Serial.printf("Freeheap: %lu, Min free: %lu, MaxAllocHeap: %lu\n", 
-    //   ESP.getFreeHeap(), 
-    //   ESP.getMinFreeHeap(),
-    //   ESP.getMaxAllocHeap());
-    
-    // Serial.printf("Audio Stack: %u, Display Stack: %u, Net Stack: %u\n",
-    //   uxTaskGetStackHighWaterMark(t_handleAudio),
-    //   uxTaskGetStackHighWaterMark(t_handleDisplay),
-    //   uxTaskGetStackHighWaterMark(runnet));
-
-    // if (psramFound())
-    // {
-    //     Serial.printf("PSRAM ใช้งานได้: %d bytes\n", ESP.getPsramSize());
-    //     Serial.printf("PSRAM ใช้งานจริง: %d bytes\n", ESP.getFreePsram());
-    // }
-    // else
-    // {
-    //     Serial.println("❌ ไม่พบ PSRAM!");
-    // }    
+    // Only detect voice commands when NOT in recording mode
+    if (!isRecordingMode) {
+        detectWord();
+    }
 }

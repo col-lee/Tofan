@@ -69,10 +69,10 @@ bool NetworkManager::clearPref() {
 
 bool NetworkManager::writeUsername() {
    if(prefs.begin("UsernameConfig", false)) {
-    prefs.putString("usesrname", username_obj.username);
+    prefs.putString("username", username_obj.username);
     prefs.putString("password", username_obj.password);
     prefs.end();
-    Serial.println("Save ssid and password to Memory successfull.");
+    Serial.println("Save username and password to Memory successfull.");
     return true;
   }
   return false;
@@ -80,7 +80,7 @@ bool NetworkManager::writeUsername() {
 
 bool NetworkManager::readUsername() {
   if(prefs.begin("UsernameConfig", true)) {
-    prefs.getString("usesrname", username_obj.username, sizeof(username_obj.username));
+    prefs.getString("username", username_obj.username, sizeof(username_obj.username));
     prefs.getString("password", username_obj.password, sizeof(username_obj.password));
     prefs.end();
     Serial.println("read data from Preferences successfull.");
@@ -128,6 +128,9 @@ void NetworkManager::closeWiFiSTA() {
   Serial.println("WiFi off.");
 }
 
+// #########################################################################################
+// #                                   WIFI STA SETTING                                    #
+// #########################################################################################
 bool NetworkManager::connectoWiFi(const char *ssid, const char *password)
 {
 
@@ -307,7 +310,7 @@ void NetworkManager::startAPMode() {
   //   xSemaphoreGive(displaySemaphore);
   // }
 
-  dnsServer.start(53, "manager.local", apIP);
+  dnsServer.start(53, "manager.setup", apIP);
   vTaskDelay(pdMS_TO_TICKS(100));
 }
 
@@ -315,9 +318,6 @@ void NetworkManager::startAdminMode() {
       if (!isServerConfigured) {
         startAPMode();
 
-        // #########################################################################################
-        // #                                   WIFI STA SETTING                                    #
-        // #########################################################################################
         if (isConnectSDcard) {
 
           if (xSemaphoreTake(sdSemaphore, pdMS_TO_TICKS(1)) == pdTRUE)

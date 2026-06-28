@@ -2,6 +2,7 @@
 #define DISPLAYMANAGER_HH
 
 #include "GlobalVar.hpp"
+#include "HardwareManager.hpp"
 #include <AnimatedGIF.h>
 #include <vector>
 
@@ -73,8 +74,13 @@ public:
     float cur_gazeX = 0, cur_gazeY = 0; 
     float tar_gazeX = 0, tar_gazeY = 0;
     
-    unsigned long nextBlinkTime = 0; 
+    unsigned long nextBlinkTime = 0;
     unsigned long nextGazeTime = 0; // เวลาที่จะเปลี่ยนจุดมองครั้งต่อไป
+
+    // Recording timer variables (used by recorde() function)
+    long seconds = 0;
+    unsigned long previousMillis = 0;
+    const long interval = 1000;
 
     std::vector<String> playlistNames;
     std::vector<String> playlistPaths;
@@ -126,9 +132,6 @@ public:
     void recorde();
 private:
     bool getJpegSize(const char* filename, uint16_t &width, uint16_t &height);
-    long seconds;
-    unsigned long previousMillis = 0; // เก็บเวลาครั้งล่าสุดที่เปลี่ยนสถานะ
-    const long interval = 1000;
 };
 
 void handleDisplay(void* pvParameter);

@@ -891,33 +891,99 @@ void DisplayManager::drawAIPet(bool pushToScreen) {
 
 void DisplayManager::debug() {
     if(spr.getBuffer() == nullptr) return;
-    
-    // 🌟 พื้นหลังดำสนิท
-    spr.fillSprite(TFT_BLACK);
-    spr.setCursor(0,10);
-    spr.printf("Mic Level: %" PRId16 "\n", readMicData());
-    spr.printf("Freeheap: %lu, \nMin free: %lu, \nMaxAllocHeap: %lu\n", 
-      ESP.getFreeHeap(), 
-      ESP.getMinFreeHeap(),
-      ESP.getMaxAllocHeap());
-    
-    spr.printf("Audio Stack: %u, \nDisplay Stack: %u, \nNet Stack: %u\n",
-      uxTaskGetStackHighWaterMark(t_handleAudio),
-      uxTaskGetStackHighWaterMark(t_handleDisplay),
-      uxTaskGetStackHighWaterMark(runnet));
 
-    if (psramFound())
-    {
-        spr.printf("PSRAM Available: %d bytes\n", ESP.getPsramSize());
-        spr.printf("PSRAM True Available: %d bytes\n", ESP.getFreePsram());
-    }
-    else
-    {
-        spr.println("❌ ไม่พบ PSRAM!");
+    // Update hardware status
+    hwManager.updateAllStatus();
+
+    spr.fillSprite(C_BG);
+    spr.setTextColor(C_TEXT);
+    spr.setTextFont(1);
+    spr.setTextSize(1);
+
+    // Header
+    spr.setTextDatum(TL_DATUM);
+    spr.drawString("HARDWARE DEBUG STATUS", 5, 5, 2);
+    spr.drawLine(5, 25, tft.width() - 5, 25, C_HILITE);
+
+    // Display devices status
+    int startY = 35;
+    int itemHeight = 28;
+    int devicesPerScreen = 7;
+
+    int totalDevices = hwManager.getDeviceCount();
+
+    for (int i = 0; i < devicesPerScreen && i < totalDevices; i++) {
+        HardwareDevice dev = hwManager.getDevice(i);
+        int yPos = startY + (i * itemHeight);
+
+        // Draw status indicator circle
+        uint16_t statusColor;
+        switch (dev.status) {
+            case DEVICE_STATUS::WORKING:
+                statusColor = TFT_GREEN;
+                break;
+            case DEVICE_STATUS::CONNECTING:
+                statusColor = TFT_YELLOW;
+                break;
+            case DEVICE_STATUS::ERROR:
+                statusColor = TFT_RED;
+                break;
+            default:
+                statusColor = TFT_DARKGRAY;
+        }
+
+        spr.fillCircle(12, yPos + 8, 4, statusColor);
+
+        // Device name
+        spr.setTextColor(C_TEXT);
+        spr.setTextDatum(TL_DATUM);
+        spr.drawString(dev.name, 25, yPos, 1);
+
+        // Status string
+        String statusStr = hwManager.getStatusString(dev.status);
+        spr.setTextDatum(TR_DATUM);
+        spr.setTextColor(statusColor);
+        spr.drawString(statusStr, tft.width() - 5, yPos, 1);
+
+        // Details
+        spr.setTextColor(C_HILITE);
+        spr.setTextDatum(TL_DATUM);
+        spr.drawString(dev.details, 25, yPos + 12, 1);
     }
 
-    if (xSemaphoreTake(displaySemaphore, 0) == pdTRUE)
-    {
+    // System info box
+    int sysBoxY = startY + (devicesPerScreen * itemHeight) - 10;
+    spr.drawRect(5, sysBoxY, tft.width() - 10, 50, C_HILITE);
+
+    spr.setTextColor(C_TEXT);
+    spr.setTextDatum(TL_DATUM);
+    spr.drawString("System Resources:", 10, sysBoxY + 5, 1);
+
+    char sysInfo[128];
+    snprintf(sysInfo, sizeof(sysInfo), "RAM: %luKB | Min: %luKB",
+        ESP.getFreeHeap() / 1024,
+        ESP.getMinFreeHeap() / 1024);
+    spr.drawString(sysInfo, 10, sysBoxY + 20, 1);
+
+    char taskInfo[128];
+    snprintf(taskInfo, sizeof(taskInfo), "Tasks - Audio:%u Dis:%u Net:%u",
+        uxTaskGetStackHighWaterMark(t_handleAudio),
+        uxTaskGetStackHighWaterMark(t_handleDisplay),
+        uxTaskGetStackHighWaterMark(runnet));
+    spr.drawString(taskInfo, 10, sysBoxY + 32, 1);
+
+    if (psramFound()) {
+        char psramInfo[64];
+        snprintf(psramInfo, sizeof(psramInfo), "PSRAM: %luKB avail", ESP.getFreePsram() / 1024);
+        spr.drawString(psramInfo, 10, sysBoxY + 44, 1);
+    }
+
+    // Navigation hint
+    spr.setTextColor(C_HILITE);
+    spr.setTextDatum(BC_DATUM);
+    spr.drawString("Back to exit debug menu", tft.width() / 2, tft.height() - 5, 1);
+
+    if (xSemaphoreTake(displaySemaphore, portMAX_DELAY) == pdTRUE) {
         spr.pushSprite(0, 0);
         xSemaphoreGive(displaySemaphore);
     }
@@ -926,25 +992,92 @@ void DisplayManager::debug() {
 void DisplayManager::recorde() {
     if(spr.getBuffer() == nullptr) return;
 
-    unsigned long currentMillis = millis();
+    // Redraw UI every frame
+    spr.fillSprite(C_BG);
 
+    // Header
+    spr.setTextColor(C_TEXT);
+    spr.setTextFont(2);
+    spr.setTextDatum(MC_DATUM);
+    spr.drawString("Voice Recording", tft.width() / 2, 30, 2);
+
+    // Recording status indicator with color
+    spr.setTextFont(1);
+    uint16_t statusColor;
+    String statusText;
+
+    if (isRecording) {
+        statusColor = TFT_RED;
+        statusText = "● RECORDING";
+    } else {
+        statusColor = TFT_DARKGRAY;
+        statusText = "● READY";
+    }
+
+    spr.setTextColor(statusColor);
+    spr.setTextDatum(MC_DATUM);
+    spr.drawString(statusText, tft.width() / 2, 70, 2);
+
+    // Timer display
+    unsigned long currentMillis = millis();
     if (currentMillis - previousMillis >= interval) {
-    
-    // บันทึกเวลาปัจจุบันไว้เป็นจุดอ้างอิงใหม่
-    previousMillis = currentMillis;
-    
-    spr.fillSprite(TFT_BLACK);
-    seconds += 1;
-    spr.setCursor(120, 160);
-    spr.printf("%lu", seconds);
-    if (xSemaphoreTake(displaySemaphore, 0) == pdTRUE)
-    {
+        previousMillis = currentMillis;
+        if (isRecording) {
+            seconds += 1;
+        }
+    }
+
+    spr.setTextColor(C_TEXT);
+    spr.setTextFont(2);
+    char timeStr[16];
+    int mins = seconds / 60;
+    int secs = seconds % 60;
+    snprintf(timeStr, sizeof(timeStr), "%02d:%02d", mins, secs);
+    spr.drawString(timeStr, tft.width() / 2, 130);
+
+    // Record button area
+    int btnX = tft.width() / 2;
+    int btnY = 200;
+    int btnRadius = 40;
+
+    // Draw button circle
+    if (isRecording) {
+        // Stop button (red square)
+        spr.fillRect(btnX - 25, btnY - 25, 50, 50, TFT_RED);
+        spr.drawRect(btnX - 25, btnY - 25, 50, 50, tft.color565(150, 0, 0));  // Dark red
+    } else {
+        // Record button (green circle)
+        spr.fillCircle(btnX, btnY, btnRadius, TFT_GREEN);
+        spr.drawCircle(btnX, btnY, btnRadius, tft.color565(0, 100, 0));  // Dark green
+    }
+
+    // Button label
+    spr.setTextColor(TFT_WHITE);
+    spr.setTextFont(1);
+    spr.setTextDatum(MC_DATUM);
+    if (isRecording) {
+        spr.drawString("STOP", btnX, btnY);
+    } else {
+        spr.drawString("REC", btnX, btnY);
+    }
+
+    // Instructions
+    spr.setTextColor(C_HILITE);
+    spr.setTextFont(1);
+    spr.setTextDatum(MC_DATUM);
+    spr.drawString("Press to record/stop", tft.width() / 2, 280);
+    spr.drawString("Back to exit", tft.width() / 2, 300);
+
+    // File size info
+    spr.setTextColor(C_TEXT);
+    char fileInfo[64];
+    snprintf(fileInfo, sizeof(fileInfo), "File: voice_record.wav");
+    spr.drawString(fileInfo, tft.width() / 2, 320 - 20);
+
+    if (xSemaphoreTake(displaySemaphore, portMAX_DELAY) == pdTRUE) {
         spr.pushSprite(0, 0);
         xSemaphoreGive(displaySemaphore);
     }
-    
-  }
-    
 }
 
 // ฟังก์ชันสำหรับแอบอ่านขนาดกว้าง/สูง จาก Header ของไฟล์ JPEG

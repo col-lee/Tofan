@@ -7,7 +7,7 @@ struct DISPLAY_COMMAND {
 struct AUDIO_COMMAND {
   enum MODULE {DIS, AUDIO} module;
   // เพิ่ม SEEK เข้าไปใน enum
-  enum AUDIO_STATE {PLAY, PUASE, STOP, SEEK} audio_state; 
+  enum AUDIO_STATE {PLAY, PUASE, STOP, SEEK} audio_state;
   String path;         // ใช้สำหรับเปลี่ยนเพลง
   uint32_t seek_time;  // ใช้สำหรับระบุวินาทีที่จะกรอเพลงไป (เฉพาะตอนสั่ง SEEK)
 };

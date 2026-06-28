@@ -37,6 +37,8 @@ static bool debug_nn = false; // Set this to true to see e.g. features generated
 static int print_results = -(EI_CLASSIFIER_SLICES_PER_MODEL_WINDOW);
 static bool record_status = true;
 
+static int32_t raw32_buffer[sample_buffer_size / 4];
+
 
 struct wav_header_t {
   char chunkID[4] = {'R', 'I', 'F', 'F'};
@@ -83,31 +85,6 @@ void initAudio(){
 }
 
 void initMicrophone() {
-  // i2s_config_t mic_config = {
-  //       .mode = (i2s_mode_t)(I2S_MODE_MASTER | I2S_MODE_RX),
-  //       .sample_rate = SAMPLE_RATE,
-  //       .bits_per_sample = I2S_BITS_PER_SAMPLE_32BIT, // ไมค์ INMP441 ส่งมาเป็น 32-bit
-  //       .channel_format = I2S_CHANNEL_FMT_ONLY_LEFT,
-        // .communication_format = I2S_COMM_FORMAT_STAND_I2S,
-  //       .intr_alloc_flags = ESP_INTR_FLAG_LEVEL1,
-  //       .dma_buf_count = 8,
-  //       .dma_buf_len = 64,
-  //       .use_apll = false,
-  //       .tx_desc_auto_clear = false,
-  //       .fixed_mclk = 0
-  //   };
-
-  //   i2s_pin_config_t mic_pins = {
-  //       .bck_io_num = MIC_SCK_PIN,
-  //       .ws_io_num = MIC_WS_PIN,
-  //       .data_out_num = I2S_PIN_NO_CHANGE, 
-  //       .data_in_num = MIC_SD_PIN
-  //   };
-
-  //   i2s_driver_install(MIC_I2S_PORT, &mic_config, 0, NULL);
-  //   i2s_set_pin(MIC_I2S_PORT, &mic_pins);
-
-    // summary of inferencing settings (from model_metadata.h)
 
     // Test LED
     pinMode(LED_PIN, OUTPUT);
@@ -162,8 +139,9 @@ int16_t readMicData() {
 }
 
 void detectWord() {
-  bool m = microphone_inference_record();
+    bool m = microphone_inference_record();
     if (!m) {
+        // ถังยังไม่เต็ม ข้ามไปก่อน (Non-blocking)
         // ei_printf("ERR: Failed to record audio...\n");
         return;
     }
@@ -180,29 +158,26 @@ void detectWord() {
     }
 
     if (++print_results >= (EI_CLASSIFIER_SLICES_PER_MODEL_WINDOW)) {
-        // print the predictions
         ei_printf("Predictions ");
         ei_printf("(DSP: %d ms., Classification: %d ms., Anomaly: %d ms.)",
             result.timing.dsp, result.timing.classification, result.timing.anomaly);
         ei_printf(": \n");
+
         for (size_t ix = 0; ix < EI_CLASSIFIER_LABEL_COUNT; ix++) {
             ei_printf("    %s: ", result.classification[ix].label);
             ei_printf_float(result.classification[ix].value);
             ei_printf("\n");
 
-            if (strcmp(result.classification[ix].label, "เปิดไฟ") == 0 && result.classification[ix].value > 0.8f)
-            {
-              Serial.println(">>> 💡 รับทราบ! กำลังเปิดไฟ... <<<");
-              digitalWrite(LED_PIN, HIGH);
+            if (strcmp(result.classification[ix].label, "เปิดไฟ") == 0 && result.classification[ix].value > 0.8f) {
+                Serial.println(">>> 💡 รับทราบ! กำลังเปิดไฟ... <<<");
+                digitalWrite(LED_PIN, HIGH);
             }
-
-            // เช็คว่าป้ายกำกับ (label) ตรงกับคำว่า "ปิดไฟ" ไหม? และมั่นใจมากกว่า 80% (0.8) หรือเปล่า?
-            else if (strcmp(result.classification[ix].label, "ปิดไฟ") == 0 && result.classification[ix].value > 0.8f)
-            {
-              Serial.println(">>> 🌑 รับทราบ! กำลังปิดไฟ... <<<");
-              digitalWrite(LED_PIN, LOW);
+            else if (strcmp(result.classification[ix].label, "ปิดไฟ") == 0 && result.classification[ix].value > 0.8f) {
+                Serial.println(">>> 🌑 รับทราบ! กำลังปิดไฟ... <<<");
+                digitalWrite(LED_PIN, LOW);
             }
         }
+
 #if EI_CLASSIFIER_HAS_ANOMALY == 1
         ei_printf("    anomaly score: ");
         ei_printf_float(result.anomaly);
@@ -213,12 +188,12 @@ void detectWord() {
     }
 }
 
-static void audio_inference_callback(uint32_t n_bytes)
+static void audio_inference_callback(uint32_t n_samples)
 {
-    for(int i = 0; i < n_bytes>>1; i++) {
+    for (uint32_t i = 0; i < n_samples; i++) {
         inference.buffers[inference.buf_select][inference.buf_count++] = sampleBuffer[i];
 
-        if(inference.buf_count >= inference.n_samples) {
+        if (inference.buf_count >= inference.n_samples) {
             inference.buf_select ^= 1;
             inference.buf_count = 0;
             inference.buf_ready = 1;
@@ -228,52 +203,44 @@ static void audio_inference_callback(uint32_t n_bytes)
 
 static void capture_samples(void* arg) {
 
-  const int32_t i2s_bytes_to_read = (uint32_t)arg;
-  size_t bytes_read = i2s_bytes_to_read;
+    const uint32_t i2s_bytes_to_read = (uint32_t)arg; // = sample_buffer_size = 2048 bytes
+    size_t bytes_read = 0;
 
-  // 🌟 แก้ไขตรงนี้: หาร 4 เพื่อหาจำนวนตัวอย่างก่อนสร้างถัง (ประหยัด RAM ไปได้ 4 เท่า!)
-  const int32_t samples_to_read = i2s_bytes_to_read / 4; 
-  int32_t raw32_buffer[samples_to_read];
+    // [แก้ไข #1 ต่อเนื่อง] ใช้ raw32_buffer ที่เป็น static global แทน VLA
+    // ไม่ต้องประกาศในฟังก์ชันอีกต่อไป ปลอดภัยจาก Stack Overflow
 
-  while (record_status) {
+    while (record_status) {
 
-    /* read data at once from i2s */
-    // จำนวนไบต์ที่อ่าน (i2s_bytes_to_read) จะพอดีกับขนาดถัง (samples_to_read * 4) เป๊ะครับ
-    i2s_read((i2s_port_t)1, (void*)raw32_buffer, i2s_bytes_to_read, &bytes_read, portMAX_DELAY);
+        // อ่าน i2s_bytes_to_read ไบต์ → ได้ sample_buffer_size/4 = 512 ตัวอย่าง (32-bit)
+        i2s_read((i2s_port_t)1, (void*)raw32_buffer, i2s_bytes_to_read, &bytes_read, portMAX_DELAY);
 
-    if (bytes_read <= 0) {
-      ei_printf("Error in I2S read : %d", bytes_read);
-    }
-    else {
-        if (bytes_read < i2s_bytes_to_read) {
-            // ไม่ต้องปริ้นเตือนตรงนี้ก็ได้ครับ เพราะบางทีไมค์ส่งมาไม่เต็มก้อน AI ก็ยังทำงานต่อได้
-            ei_printf("Partial I2S read"); 
+        if (bytes_read <= 0) {
+            ei_printf("Error in I2S read : %d", bytes_read);
+            continue;
         }
 
+        // จำนวน samples ที่อ่านได้จริง (1 sample = 4 bytes เพราะเป็น int32)
         int samples_read = bytes_read / 4;
 
-        // scale the data (otherwise the sound is too quiet)
+        // แปลง 32-bit → 16-bit พร้อม Gain และ Clipping Protection
         for (int x = 0; x < samples_read; x++) {
-            int32_t sample = raw32_buffer[x] >> 16; // หั่นบิต
-            
-            sample = sample * 16; // 🌟 ปรับความดัง (Gain) ตรงนี้ (แนะนำ 16 หรือ 32)
-            
-            // กันเสียงแตก (Clipping Protection)
-            if (sample > 32767) sample = 32767;
+            int32_t sample = raw32_buffer[x] >> 16;
+            sample = sample * 16;
+            if (sample > 32767)  sample = 32767;
             if (sample < -32768) sample = -32768;
-            
-            sampleBuffer[x] = (int16_t)sample; // โยนเข้าถังพักของ AI
+            sampleBuffer[x] = (int16_t)sample;
         }
 
         if (record_status) {
-            audio_inference_callback(samples_read * 2); // คืนค่าเป็นจำนวน "ไบต์" สำหรับ 16-bit
-        }
-        else {
+            // [แก้ไข #2 ต่อเนื่อง] ส่ง samples_read (จำนวน samples) ตรงๆ
+            // เดิมส่ง samples_read * 2 (แปลงกลับเป็น bytes) แล้ว callback ก็หาร 2 อีกทีให้งง
+            audio_inference_callback(samples_read);
+        } else {
             break;
         }
     }
-  }
-  vTaskDelete(NULL);
+
+    vTaskDelete(NULL);
 }
 
 /**
@@ -286,22 +253,20 @@ static void capture_samples(void* arg) {
 static bool microphone_inference_start(uint32_t n_samples)
 {
     inference.buffers[0] = (signed short *)malloc(n_samples * sizeof(signed short));
-
     if (inference.buffers[0] == NULL) {
         return false;
     }
 
     inference.buffers[1] = (signed short *)malloc(n_samples * sizeof(signed short));
-
     if (inference.buffers[1] == NULL) {
         ei_free(inference.buffers[0]);
         return false;
     }
 
     inference.buf_select = 0;
-    inference.buf_count = 0;
-    inference.n_samples = n_samples;
-    inference.buf_ready = 0;
+    inference.buf_count  = 0;
+    inference.n_samples  = n_samples;
+    inference.buf_ready  = 0;
 
     if (i2s_init(EI_CLASSIFIER_FREQUENCY)) {
         ei_printf("Failed to start I2S!");
@@ -311,7 +276,11 @@ static bool microphone_inference_start(uint32_t n_samples)
 
     record_status = true;
 
-    xTaskCreate(capture_samples, "CaptureSamples", 1024 * 32, (void*)sample_buffer_size, 10, NULL);
+    // [แก้ไข #3] เพิ่ม Stack size จาก 1024*32 → 1024*48
+    // เหตุผล: capture_samples ต้องรัน i2s_read + loop แปลงข้อมูล + เรียก callback
+    // Stack เดิม 32KB อาจพอดีเกินไป การเพิ่มเป็น 48KB ป้องกัน Stack Overflow
+    // ได้แบบมี margin เพียงพอโดยไม่สิ้นเปลือง RAM มากเกินไป
+    xTaskCreate(capture_samples, "CaptureSamples", 1024 * 48, (void*)sample_buffer_size, 10, NULL);
 
     return true;
 }
@@ -324,17 +293,18 @@ static bool microphone_inference_start(uint32_t n_samples)
 // 🌟 โค้ดที่แก้ไขแล้ว (Non-blocking: ลื่นไหล 100%)
 static bool microphone_inference_record(void)
 {
-    // ถ้าถังเสียงยังไม่เต็ม ไม่ต้องรอ! คืนค่า false แล้วกลับไปรัน OS ต่อเลย
     if (inference.buf_ready == 0) {
+        // ถังยังไม่เต็ม → Non-blocking return
         return false;
     }
 
-    // ถ้าระบบหมุนมาไม่ทันจนถังล้น (Overrun)
     if (inference.buf_ready > 1) {
-        // ei_printf("Warning: Buffer overrun\n"); // คอมเมนต์ไว้จะได้ไม่รกจอ
+        // Overrun: Task AI ช้าเกินไป ถังถูกเขียนทับก่อนอ่าน
+        // Log เตือนไว้ แต่ยังทำงานต่อได้
+        ei_printf("Warn: Buffer overrun (%d)\n", inference.buf_ready);
     }
 
-    // ถ้าถังเต็มพอดี (buf_ready == 1) เคลียร์สถานะแล้วคืนค่า true ให้ AI เริ่มคิด
+    // ไม่ว่าจะ overrun หรือปกติ ให้รีเซ็ตเป็น 0 แล้วคืน true เสมอ
     inference.buf_ready = 0;
     return true;
 }
@@ -344,8 +314,8 @@ static bool microphone_inference_record(void)
  */
 static int microphone_audio_signal_get_data(size_t offset, size_t length, float *out_ptr)
 {
+    // buf_select ^ 1 = อ่าน buffer ที่ "เพิ่งเต็ม" (ไม่ใช่ตัวที่กำลังเขียนอยู่) ถูกต้องแล้ว
     numpy::int16_to_float(&inference.buffers[inference.buf_select ^ 1][offset], out_ptr, length);
-
     return 0;
 }
 
@@ -595,11 +565,12 @@ void recordLoop() {
             if (amplified < -32768) amplified = -32768;
 
             // 4. โยนลงถังพัก
-            wav_buffer[i] = (int16_t)amplified; 
+            wav_buffer[i] = (int16_t)amplified;
         }
 
         recordFile.write((uint8_t*)wav_buffer, samples_read * 2);
         totalSize += (samples_read * 2);
+        
     }
 }
 
