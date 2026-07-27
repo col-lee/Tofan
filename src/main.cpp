@@ -34,8 +34,8 @@ NetworkManager nm;
 FileManager file_card;
 
 // Recording state control
-bool isRecordingMode = false;     // Disable detectWord during recording
-bool isRecording = false;          // Track actual recording state
+bool volatile isRecordingMode = false;     // Disable detectWord during recording
+bool volatile isRecording = false;          // Track actual recording state
 
 #define ENC_A_PIN 15
 #define ENC_B_PIN  16
@@ -57,13 +57,11 @@ void IRAM_ATTR readEncoderISR() {
     rotaryEncoder.readEncoder_ISR();
 }
 
-// 🌟 ตัวจัดการ Input
 void handleInput() {
   if (rotaryEncoder.encoderChanged()) {
         if (DISM.currentState == UI_STATE::HOME_MENU) {
             int rawValue = rotaryEncoder.readEncoder();
 
-            // 🌟 1. ส่งค่าดิบให้แอนิเมชัน (ไหลไปเรื่อยๆ ไม่ดีดกลับ)
             DISM.animatedMenuIndex_target = (float)rawValue;
 
             // 🌟 2. คำนวณ Index ฟีเจอร์ (0-4) ให้ตรงกับไอคอน

@@ -79,9 +79,8 @@ public:
     extern bool isFileManager_install;
     extern bool isConnectSDcard;
 
-    // Recording state control
-    extern bool isRecordingMode;     // Flag to disable detectWord during recording
-    extern bool isRecording;          // Flag to track actual recording state
+    extern volatile bool isRecordingMode;
+    extern volatile bool isRecording;
 #endif
 
 

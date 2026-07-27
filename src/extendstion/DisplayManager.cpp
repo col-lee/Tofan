@@ -27,7 +27,7 @@ DisplayManager::~DisplayManager() {
 void DisplayManager::initDisplay(){
     if(xSemaphoreTake(displaySemaphore, pdMS_TO_TICKS(500)) == pdTRUE) {
         tft.init();
-        tft.setRotation(1);
+        tft.setRotation(3);
         tft.setTextSize(2);
         tft.fillScreen(TFT_BLACK);
 

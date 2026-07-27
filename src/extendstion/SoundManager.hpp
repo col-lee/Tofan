@@ -6,21 +6,6 @@
 #include <driver/i2s.h>
 #include "GlobalVar.hpp"
 
-#define LED_PIN 18
-
-// Audio pin
-#define RLC_PIN 5
-#define BLCK_PIN 4
-#define DIN_PIN 6
-
-// Microphone Pin
-#define MIC_I2S_PORT I2S_NUM_1
-#define MIC_WS_PIN   2
-#define MIC_SCK_PIN  17
-#define MIC_SD_PIN   1
-
-#define SAMPLE_RATE 16000
-
 #ifndef ENCODER_VALUE
 #define ENCODER_VALUE
     extern String currentSongTitle;
@@ -42,19 +27,18 @@ void initAudio();
 void initMicrophone();
 int16_t readMicData();
 void handleAudio(void *parameter);
-void startRecording(const char* path);
+bool enterRecordingMode();
+void exitRecordingMode();
+bool startRecording(const char* path);
 void recordLoop();
 void stopRecording();
+bool isMicrophoneReady();
+bool isMicrophoneCapturing();
+unsigned long getMicrophoneLastSampleMillis();
+uint32_t getMicrophoneReadErrors();
+uint32_t getRecordingDroppedFrames();
 
 void detectWord();
-static void audio_inference_callback(uint32_t n_bytes);
-static void capture_samples(void* arg);
-static bool microphone_inference_start(uint32_t n_samples);
-static bool microphone_inference_record(void);
-static int microphone_audio_signal_get_data(size_t offset, size_t length, float *out_ptr);
-static void microphone_inference_end(void);
-static int i2s_init(uint32_t sampling_rate);
-static int i2s_deinit(void);
 
 // ประกาศฟังก์ชัน Callback ของไลบรารี I2S
 void audio_info(const char *info);

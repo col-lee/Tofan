@@ -128,9 +128,6 @@ void NetworkManager::closeWiFiSTA() {
   Serial.println("WiFi off.");
 }
 
-// #########################################################################################
-// #                                   WIFI STA SETTING                                    #
-// #########################################################################################
 bool NetworkManager::connectoWiFi(const char *ssid, const char *password)
 {
 
@@ -318,6 +315,9 @@ void NetworkManager::startAdminMode() {
       if (!isServerConfigured) {
         startAPMode();
 
+        // #########################################################################################
+        // #                                   WIFI STA SETTING                                    #
+        // #########################################################################################
         if (isConnectSDcard) {
 
           if (xSemaphoreTake(sdSemaphore, pdMS_TO_TICKS(1)) == pdTRUE)

@@ -24,9 +24,9 @@ bool autoPlayNext = false;
 /** Audio buffers, pointers and selectors */
 typedef struct {
     signed short *buffers[2];
-    unsigned char buf_select;
-    unsigned char buf_ready;
-    unsigned int buf_count;
+    volatile unsigned char buf_select;
+    volatile unsigned char buf_ready;
+    volatile unsigned int buf_count;
     unsigned int n_samples;
 } inference_t;
 
@@ -35,9 +35,34 @@ static const uint32_t sample_buffer_size = 2048;
 static signed short sampleBuffer[sample_buffer_size];
 static bool debug_nn = false; // Set this to true to see e.g. features generated from the raw signal
 static int print_results = -(EI_CLASSIFIER_SLICES_PER_MODEL_WINDOW);
-static bool record_status = true;
+static volatile bool record_status = true;
 
 static int32_t raw32_buffer[sample_buffer_size / 4];
+
+static constexpr uint16_t RECORDER_FRAME_SAMPLES = sample_buffer_size / 4;
+static constexpr uint8_t RECORDER_QUEUE_DEPTH = 8;
+
+struct RecorderFrame {
+    uint16_t sampleCount;
+    int16_t samples[RECORDER_FRAME_SAMPLES];
+};
+
+static QueueHandle_t recorderQueue = nullptr;
+static TaskHandle_t microphoneTask = nullptr;
+static volatile bool microphoneReady = false;
+static volatile bool microphoneCapturing = false;
+static volatile int16_t microphoneLevel = 0;
+static volatile unsigned long microphoneLastSampleMillis = 0;
+static volatile uint32_t microphoneReadErrors = 0;
+static volatile uint32_t recordingDroppedFrames = 0;
+
+static void audio_inference_callback(uint32_t nSamples);
+static void capture_samples(void* arg);
+static bool microphone_inference_start(uint32_t nSamples);
+static bool microphone_inference_record(void);
+static int microphone_audio_signal_get_data(size_t offset, size_t length, float *outPtr);
+static int i2s_init(uint32_t samplingRate);
+static bool writeRecorderFrame(const RecorderFrame& frame);
 
 
 struct wav_header_t {
@@ -70,7 +95,7 @@ int currentStationIndex = 2;
 
 void initAudio(){
   Serial.printf("Audio Task started on Core %d\n", xPortGetCoreID());
-  if(audio.setPinout(BLCK_PIN, RLC_PIN, DIN_PIN)) {
+  if(audio.setPinout(AUDIO_BCLK, AUDIO_LRCLK, AUDIO_DIN)) {
     Serial.println("installed audio.");
     isAudio_install = true;
   } else {
@@ -85,64 +110,23 @@ void initAudio(){
 }
 
 void initMicrophone() {
-
-    // Test LED
     pinMode(LED_PIN, OUTPUT);
     digitalWrite(LED_PIN, LOW);
 
-    Serial.println("Edge Impulse Inferencing Demo");
-
-    // summary of inferencing settings (from model_metadata.h)
-    ei_printf("Inferencing settings:\n");
-    ei_printf("\tInterval: ");
-    ei_printf_float((float)EI_CLASSIFIER_INTERVAL_MS);
-    ei_printf(" ms.\n");
-    ei_printf("\tFrame size: %d\n", EI_CLASSIFIER_DSP_INPUT_FRAME_SIZE);
-    ei_printf("\tSample length: %d ms.\n", EI_CLASSIFIER_RAW_SAMPLE_COUNT / 16);
-    ei_printf("\tNo. of classes: %d\n", sizeof(ei_classifier_inferencing_categories) / sizeof(ei_classifier_inferencing_categories[0]));
-
     run_classifier_init();
-    ei_printf("\nStarting continious inference in 2 seconds...\n");
-    ei_sleep(2000);
-
-    if (microphone_inference_start(EI_CLASSIFIER_SLICE_SIZE) == false) {
-        ei_printf("ERR: Could not allocate audio buffer (size %d), this could be due to the window length of your model\r\n", EI_CLASSIFIER_RAW_SAMPLE_COUNT);
-        return;
-    }
-
-    ei_printf("Recording...\n");
+    microphoneReady = microphone_inference_start(EI_CLASSIFIER_SLICE_SIZE);
+    Serial.println(microphoneReady ? "Microphone ready" : "Microphone initialization failed");
 }
 
 int16_t readMicData() {
-    int32_t sample32 = 0;
-    int16_t sample16 = 0;
-    size_t bytes_read;
-
-    // 1. อ่านข้อมูลเสียงแบบ 32-bit จากพอร์ต 1
-    esp_err_t result = i2s_read(MIC_I2S_PORT, &sample32, sizeof(sample32), &bytes_read, portMAX_DELAY);
-
-    if (result == ESP_OK && bytes_read > 0) {
-        // 2. แปลงข้อมูลจาก 32-bit ให้เป็น 16-bit (เพื่อตัดบิตขยะทิ้งและลดขนาดตัวเลข)
-        // INMP441 มักจะส่งข้อมูลมาที่บิตบนๆ การเลื่อนบิต (Bit Shift) >> 14 จะได้ค่า 16-bit ที่พอดี
-        sample16 = sample32 >> 16; 
-
-        // 3. กรองสัญญาณรบกวนจุกจิก (ถ้าไมค์ไม่มีเสียง มันมักจะพ่น 0 หรือ -1 ออกมา)
-        if (sample16 != 0 && sample16 != -1) {
-            // 4. พ่นค่าออกทาง Serial
-            Serial.print(">MicLevel:");
-            Serial.println(sample16);
-            return sample16;
-        }
-    }
-
-    return 0;
+    return microphoneLevel;
 }
 
 void detectWord() {
+    if (!microphoneReady || isRecordingMode) return;
+
     bool m = microphone_inference_record();
     if (!m) {
-        // ถังยังไม่เต็ม ข้ามไปก่อน (Non-blocking)
-        // ei_printf("ERR: Failed to record audio...\n");
         return;
     }
 
@@ -169,11 +153,11 @@ void detectWord() {
             ei_printf("\n");
 
             if (strcmp(result.classification[ix].label, "เปิดไฟ") == 0 && result.classification[ix].value > 0.8f) {
-                Serial.println(">>> 💡 รับทราบ! กำลังเปิดไฟ... <<<");
+                Serial.println("Voice command: light on");
                 digitalWrite(LED_PIN, HIGH);
             }
             else if (strcmp(result.classification[ix].label, "ปิดไฟ") == 0 && result.classification[ix].value > 0.8f) {
-                Serial.println(">>> 🌑 รับทราบ! กำลังปิดไฟ... <<<");
+                Serial.println("Voice command: light off");
                 digitalWrite(LED_PIN, LOW);
             }
         }
@@ -202,45 +186,54 @@ static void audio_inference_callback(uint32_t n_samples)
 }
 
 static void capture_samples(void* arg) {
-
-    const uint32_t i2s_bytes_to_read = (uint32_t)arg; // = sample_buffer_size = 2048 bytes
-    size_t bytes_read = 0;
-
-    // [แก้ไข #1 ต่อเนื่อง] ใช้ raw32_buffer ที่เป็น static global แทน VLA
-    // ไม่ต้องประกาศในฟังก์ชันอีกต่อไป ปลอดภัยจาก Stack Overflow
+    const uint32_t i2sBytesToRead = (uint32_t)arg;
+    size_t bytesRead = 0;
+    microphoneCapturing = true;
 
     while (record_status) {
-
-        // อ่าน i2s_bytes_to_read ไบต์ → ได้ sample_buffer_size/4 = 512 ตัวอย่าง (32-bit)
-        i2s_read((i2s_port_t)1, (void*)raw32_buffer, i2s_bytes_to_read, &bytes_read, portMAX_DELAY);
-
-        if (bytes_read <= 0) {
-            ei_printf("Error in I2S read : %d", bytes_read);
+        const esp_err_t result = i2s_read(MIC_I2S_PORT, raw32_buffer, i2sBytesToRead,
+                                          &bytesRead, pdMS_TO_TICKS(100));
+        if (result != ESP_OK || bytesRead == 0) {
+            microphoneReadErrors++;
             continue;
         }
 
-        // จำนวน samples ที่อ่านได้จริง (1 sample = 4 bytes เพราะเป็น int32)
-        int samples_read = bytes_read / 4;
+        const uint16_t sampleCount = bytesRead / sizeof(int32_t);
+        if (sampleCount == 0) continue;
+        microphoneLastSampleMillis = millis();
 
-        // แปลง 32-bit → 16-bit พร้อม Gain และ Clipping Protection
-        for (int x = 0; x < samples_read; x++) {
-            int32_t sample = raw32_buffer[x] >> 16;
-            sample = sample * 16;
-            if (sample > 32767)  sample = 32767;
-            if (sample < -32768) sample = -32768;
-            sampleBuffer[x] = (int16_t)sample;
+        if (isRecordingMode) {
+            if (!isRecording || recorderQueue == nullptr) continue;
+
+            RecorderFrame frame{};
+            frame.sampleCount = sampleCount;
+            for (uint16_t index = 0; index < sampleCount; ++index) {
+                int32_t sample = (raw32_buffer[index] >> 16) * 16;
+                if (sample > INT16_MAX) sample = INT16_MAX;
+                if (sample < INT16_MIN) sample = INT16_MIN;
+                frame.samples[index] = static_cast<int16_t>(sample);
+            }
+            microphoneLevel = frame.samples[sampleCount - 1];
+
+            if (isRecording && xQueueSend(recorderQueue, &frame, 0) != pdPASS) {
+                recordingDroppedFrames++;
+            }
+            continue;
         }
 
-        if (record_status) {
-            // [แก้ไข #2 ต่อเนื่อง] ส่ง samples_read (จำนวน samples) ตรงๆ
-            // เดิมส่ง samples_read * 2 (แปลงกลับเป็น bytes) แล้ว callback ก็หาร 2 อีกทีให้งง
-            audio_inference_callback(samples_read);
-        } else {
-            break;
+        for (uint16_t index = 0; index < sampleCount; ++index) {
+            int32_t sample = (raw32_buffer[index] >> 16) * 16;
+            if (sample > INT16_MAX) sample = INT16_MAX;
+            if (sample < INT16_MIN) sample = INT16_MIN;
+            sampleBuffer[index] = static_cast<int16_t>(sample);
         }
+        microphoneLevel = sampleBuffer[sampleCount - 1];
+        audio_inference_callback(sampleCount);
     }
 
-    vTaskDelete(NULL);
+    microphoneCapturing = false;
+    microphoneTask = nullptr;
+    vTaskDelete(nullptr);
 }
 
 /**
@@ -268,19 +261,37 @@ static bool microphone_inference_start(uint32_t n_samples)
     inference.n_samples  = n_samples;
     inference.buf_ready  = 0;
 
-    if (i2s_init(EI_CLASSIFIER_FREQUENCY)) {
-        ei_printf("Failed to start I2S!");
+    if (i2s_init(EI_CLASSIFIER_FREQUENCY) != 0) {
+        ei_free(inference.buffers[0]);
+        ei_free(inference.buffers[1]);
+        inference.buffers[0] = nullptr;
+        inference.buffers[1] = nullptr;
+        return false;
     }
 
-    ei_sleep(100);
+    recorderQueue = xQueueCreate(RECORDER_QUEUE_DEPTH, sizeof(RecorderFrame));
+    if (recorderQueue == nullptr) {
+        i2s_driver_uninstall(MIC_I2S_PORT);
+        ei_free(inference.buffers[0]);
+        ei_free(inference.buffers[1]);
+        inference.buffers[0] = nullptr;
+        inference.buffers[1] = nullptr;
+        return false;
+    }
 
     record_status = true;
-
-    // [แก้ไข #3] เพิ่ม Stack size จาก 1024*32 → 1024*48
-    // เหตุผล: capture_samples ต้องรัน i2s_read + loop แปลงข้อมูล + เรียก callback
-    // Stack เดิม 32KB อาจพอดีเกินไป การเพิ่มเป็น 48KB ป้องกัน Stack Overflow
-    // ได้แบบมี margin เพียงพอโดยไม่สิ้นเปลือง RAM มากเกินไป
-    xTaskCreate(capture_samples, "CaptureSamples", 1024 * 48, (void*)sample_buffer_size, 10, NULL);
+    const BaseType_t taskCreated = xTaskCreate(capture_samples, "CaptureSamples", 4096,
+                                                (void*)sample_buffer_size, 10, &microphoneTask);
+    if (taskCreated != pdPASS) {
+        vQueueDelete(recorderQueue);
+        recorderQueue = nullptr;
+        i2s_driver_uninstall(MIC_I2S_PORT);
+        ei_free(inference.buffers[0]);
+        ei_free(inference.buffers[1]);
+        inference.buffers[0] = nullptr;
+        inference.buffers[1] = nullptr;
+        return false;
+    }
 
     return true;
 }
@@ -319,22 +330,10 @@ static int microphone_audio_signal_get_data(size_t offset, size_t length, float 
     return 0;
 }
 
-/**
- * @brief      Stop PDM and release buffers
- */
-static void microphone_inference_end(void)
-{
-    i2s_deinit();
-    ei_free(inference.buffers[0]);
-    ei_free(inference.buffers[1]);
-}
-
-
-static int i2s_init(uint32_t sampling_rate) {
-  // Start listening for audio: MONO @ 8/16KHz
+static int i2s_init(uint32_t samplingRate) {
   i2s_config_t i2s_config = {
       .mode = (i2s_mode_t)(I2S_MODE_MASTER | I2S_MODE_RX),
-      .sample_rate = sampling_rate,
+      .sample_rate = samplingRate,
       .bits_per_sample = I2S_BITS_PER_SAMPLE_32BIT,
       .channel_format = I2S_CHANNEL_FMT_ONLY_LEFT,
       .communication_format = I2S_COMM_FORMAT_STAND_I2S,
@@ -346,34 +345,24 @@ static int i2s_init(uint32_t sampling_rate) {
       .fixed_mclk = -1,
   };
   i2s_pin_config_t pin_config = {
-      .bck_io_num = MIC_SCK_PIN,    // IIS_SCLK
-      .ws_io_num = MIC_WS_PIN,     // IIS_LCLK
-      .data_out_num = I2S_PIN_NO_CHANGE,  // IIS_DSIN
-      .data_in_num = MIC_SD_PIN,   // IIS_DOUT
+      .bck_io_num = MIC_SCK_PIN,
+      .ws_io_num = MIC_WS_PIN,
+      .data_out_num = I2S_PIN_NO_CHANGE,
+      .data_in_num = MIC_SD_PIN,
   };
-  esp_err_t ret = 0;
 
-  ret = i2s_driver_install((i2s_port_t)1, &i2s_config, 0, NULL);
-  if (ret != ESP_OK) {
-    ei_printf("Error in i2s_driver_install");
+  if (i2s_driver_install(MIC_I2S_PORT, &i2s_config, 0, nullptr) != ESP_OK) {
+    return -1;
   }
-
-  ret = i2s_set_pin((i2s_port_t)1, &pin_config);
-  if (ret != ESP_OK) {
-    ei_printf("Error in i2s_set_pin");
+  if (i2s_set_pin(MIC_I2S_PORT, &pin_config) != ESP_OK) {
+    i2s_driver_uninstall(MIC_I2S_PORT);
+    return -1;
   }
-
-  ret = i2s_zero_dma_buffer((i2s_port_t)1);
-  if (ret != ESP_OK) {
-    ei_printf("Error in initializing dma buffer with 0");
+  if (i2s_zero_dma_buffer(MIC_I2S_PORT) != ESP_OK) {
+    i2s_driver_uninstall(MIC_I2S_PORT);
+    return -1;
   }
-
-  return int(ret);
-}
-
-static int i2s_deinit(void) {
-    i2s_driver_uninstall((i2s_port_t)1); //stop & destroy i2s driver
-    return 0;
+  return 0;
 }
 
 #if !defined(EI_CLASSIFIER_SENSOR) || EI_CLASSIFIER_SENSOR != EI_CLASSIFIER_SENSOR_MICROPHONE
@@ -515,73 +504,130 @@ void audio_eof_mp3(const char *info){
     autoPlayNext = true;
 }
 
-void startRecording(const char* path) {
-    if(!isFileManager_install) {
-        Serial.println("SD Card Mount Failed");
-        return;
-    }
+bool enterRecordingMode() {
+    if (!microphoneReady || recorderQueue == nullptr) return false;
 
-    if(SD.exists(path)) SD.remove(path);
-
-    recordFile = SD.open(path, FILE_WRITE);
-    if(!recordFile) {
-        Serial.println("Failed to open file for recording");
-        return;
-    }
-
-    // เขียน Header หลอกๆ ไว้ก่อน 44 ไบต์แรก
-    wav_header_t header;
-    recordFile.write((uint8_t*)&header, sizeof(header));
-    totalSize = 0;
-    Serial.println("Recording started...");
+    isRecording = false;
+    isRecordingMode = true;
+    inference.buf_count = 0;
+    inference.buf_ready = 0;
+    xQueueReset(recorderQueue);
+    return true;
 }
 
-#define BUFFER_SAMPLES 256 
+void exitRecordingMode() {
+    stopRecording();
+    isRecording = false;
+    isRecordingMode = false;
+    inference.buf_count = 0;
+    inference.buf_ready = 0;
+    if (recorderQueue != nullptr) xQueueReset(recorderQueue);
+}
+
+bool startRecording(const char* path) {
+    if (!isRecordingMode || !isFileManager_install || recordFile || path == nullptr) {
+        return false;
+    }
+    if (xSemaphoreTake(sdSemaphore, pdMS_TO_TICKS(500)) != pdTRUE) {
+        Serial.println("SD busy");
+        return false;
+    }
+
+    if (SD.exists(path) && !SD.remove(path)) {
+        xSemaphoreGive(sdSemaphore);
+        Serial.println("Unable to replace recording");
+        return false;
+    }
+
+    recordFile = SD.open(path, FILE_WRITE);
+    if (!recordFile) {
+        xSemaphoreGive(sdSemaphore);
+        Serial.println("Unable to create recording");
+        return false;
+    }
+
+    wav_header_t header{};
+    header.chunkSize = 36;
+    header.subchunk2Size = 0;
+    const bool headerWritten = recordFile.write(reinterpret_cast<const uint8_t*>(&header), sizeof(header)) == sizeof(header);
+    xSemaphoreGive(sdSemaphore);
+
+    if (!headerWritten) {
+        recordFile.close();
+        Serial.println("Unable to write WAV header");
+        return false;
+    }
+
+    totalSize = 0;
+    recordingDroppedFrames = 0;
+    xQueueReset(recorderQueue);
+    Serial.println("Recording started");
+    return true;
+}
+
+static bool writeRecorderFrame(const RecorderFrame& frame) {
+    if (!recordFile || frame.sampleCount == 0) return false;
+    if (xSemaphoreTake(sdSemaphore, pdMS_TO_TICKS(50)) != pdTRUE) return false;
+
+    const size_t bytesToWrite = frame.sampleCount * sizeof(int16_t);
+    const size_t bytesWritten = recordFile.write(reinterpret_cast<const uint8_t*>(frame.samples), bytesToWrite);
+    xSemaphoreGive(sdSemaphore);
+
+    if (bytesWritten != bytesToWrite) return false;
+    totalSize += bytesWritten;
+    return true;
+}
 
 void recordLoop() {
-    int32_t i2s_buffer[BUFFER_SAMPLES]; // ถังรับเสียง 32-bit จากไมค์
-    int16_t wav_buffer[BUFFER_SAMPLES]; // ถังพักเสียง 16-bit ก่อนลง SD
-    size_t bytes_read;
+    if (!isRecording || recorderQueue == nullptr) return;
 
-    // 1. ดูดเสียงจากไมค์มารวดเดียว 256 ตัวอย่าง
-    i2s_read(I2S_NUM_1, &i2s_buffer, sizeof(i2s_buffer), &bytes_read, portMAX_DELAY);
-
-    if (bytes_read > 0) {
-        int samples_read = bytes_read / 4; 
-        
-        // 🌟 กำหนดตัวคูณขยายเสียง (Gain) ลองตั้งที่ 8, 16 หรือ 32 ดูครับ
-        int gain_factor = 16; 
-
-        for (int i = 0; i < samples_read; i++) {
-            // 1. ดึงค่า 16-bit ออกมาตามปกติ
-            int32_t raw_sample = i2s_buffer[i] >> 16; 
-            
-            // 2. คูณขยายเสียง!
-            int32_t amplified = raw_sample * gain_factor;
-
-            // 3. 🛑 ระบบกันเสียงแตก (Clipping Protection) 🛑
-            // สำคัญมาก! ถ้าคูณแล้วเลขทะลุ 32767 ลำโพงจะดังแครกๆ เหมือนวิทยุพัง
-            if (amplified > 32767) amplified = 32767;
-            if (amplified < -32768) amplified = -32768;
-
-            // 4. โยนลงถังพัก
-            wav_buffer[i] = (int16_t)amplified;
-        }
-
-        recordFile.write((uint8_t*)wav_buffer, samples_read * 2);
-        totalSize += (samples_read * 2);
-        
+    RecorderFrame frame{};
+    for (uint8_t index = 0; index < 2 && xQueueReceive(recorderQueue, &frame, 0) == pdPASS; ++index) {
+        if (!writeRecorderFrame(frame)) recordingDroppedFrames++;
     }
 }
 
 void stopRecording() {
-    // กลับไปอัปเดตขนาดไฟล์ที่ Header (ไบต์ที่ 4 และ 40)
-    wav_header_t header;
+    if (!recordFile) return;
+
+    isRecording = false;
+    RecorderFrame frame{};
+    while (recorderQueue != nullptr && xQueueReceive(recorderQueue, &frame, 0) == pdPASS) {
+        if (!writeRecorderFrame(frame)) recordingDroppedFrames++;
+    }
+
+    if (xSemaphoreTake(sdSemaphore, pdMS_TO_TICKS(500)) != pdTRUE) {
+        Serial.println("Unable to finalize recording");
+        return;
+    }
+
+    wav_header_t header{};
     header.chunkSize = totalSize + 36;
     header.subchunk2Size = totalSize;
-
+    recordFile.flush();
     recordFile.seek(0);
-    recordFile.write((uint8_t*)&header, sizeof(header));
+    recordFile.write(reinterpret_cast<const uint8_t*>(&header), sizeof(header));
     recordFile.close();
-    Serial.println("Recording saved!");
+    xSemaphoreGive(sdSemaphore);
+    Serial.println("Recording saved");
+}
+
+bool isMicrophoneReady() {
+    return microphoneReady;
+}
+
+bool isMicrophoneCapturing() {
+    return microphoneCapturing;
+}
+
+unsigned long getMicrophoneLastSampleMillis() {
+    return microphoneLastSampleMillis;
+}
+
+uint32_t getMicrophoneReadErrors() {
+    return microphoneReadErrors;
+}
+
+uint32_t getRecordingDroppedFrames() {
+    return recordingDroppedFrames;
 }
