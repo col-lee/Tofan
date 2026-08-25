@@ -6,8 +6,9 @@
 #include "extendstion/FileManager.hpp"
 #include "extendstion/Network.hpp"
 #include "extendstion/SoundManager.hpp"
-#include "extendstion/IOManager.hpp"
+// #include "extendstion/IOManager.hpp"
 #include "extendstion/HardwareManager.hpp"
+#include "extendstion/config.hpp"
 
 #ifndef DISPLAYMANAGER_HH
 #define DISPLAYMANAGER_HH
@@ -36,13 +37,6 @@ FileManager file_card;
 // Recording state control
 bool volatile isRecordingMode = false;     // Disable detectWord during recording
 bool volatile isRecording = false;          // Track actual recording state
-
-#define ENC_A_PIN 15
-#define ENC_B_PIN  16
-#define ENC_SW  10
-#define BTN_BACK 7
-#define ENC_VCC -1
-#define ENC_STEPS 2
 
 AiEsp32RotaryEncoder rotaryEncoder = AiEsp32RotaryEncoder(ENC_A_PIN, ENC_B_PIN, -1, ENC_VCC, ENC_STEPS, false);
  
@@ -126,7 +120,7 @@ void handleInput() {
             switch (DISM.currentMenuIndex) {
                 case 0:
                     // 🌟 เข้าสู่หน้าเลือกรูปภาพแทนการเล่นไฟล์โดยตรง
-                    rotaryEncoder.setBoundaries(0, (int)DISM.imageNames.size(), true);
+                    rotaryEncoder.setBoundaries(0, (int)DISM.imageNames.size() - 1, true);
                     rotaryEncoder.setEncoderValue(DISM.imageSelectedIndex);
                     DISM.loadImageList();
                     DISM.currentState = UI_STATE::APP_DISPLAY_LIST;
@@ -540,8 +534,8 @@ void setup() {
       Serial.println("❌ ไม่พบ PSRAM!");
   }
 
-  pinMode(BTN_BACK, INPUT);
-  pinMode(ENC_SW, INPUT);
+    pinMode(BTN_BACK, INPUT);
+    pinMode(ENC_SW, INPUT);
 
   sdSemaphore = xSemaphoreCreateMutex();
   displaySemaphore = xSemaphoreCreateMutex();
@@ -719,7 +713,7 @@ void loop() {
     }
 
     if(DISM.currentState == UI_STATE::APP_ONLINE_MUSIC) {
-        DISM.drawOnlineMusicPlayer();
+        DISM.drawOnlineMusicPlayer();  
         vTaskDelay(50);
     }
 
@@ -738,4 +732,11 @@ void loop() {
     if (!isRecordingMode) {
         detectWord();
     }
+
+    // if (rotaryEncoder.encoderChanged()) {
+    //     Serial.print("Encoder Value: ");
+    //     Serial.println(rotaryEncoder.readEncoder());
+    //     Serial.printf("Current Menu Index: %d\n", DISM.currentMenuIndex);
+    // }
+
 }

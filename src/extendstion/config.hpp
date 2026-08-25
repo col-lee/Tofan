@@ -16,14 +16,12 @@
 #define TFT_RST         42
 
 // ========== ENCODER (Rotary) ==========
-#define ENC_A_PIN       15
-#define ENC_B_PIN       16
-#define ENC_SW_PIN      10
-#define ENC_VCC_PIN     -1
-#define ENC_STEPS       2
-
-// ========== BUTTONS ==========
-#define BTN_BACK_PIN    7
+#define ENC_A_PIN 21
+#define ENC_B_PIN 16
+#define ENC_SW 10
+#define BTN_BACK 7
+#define ENC_VCC -1
+#define ENC_STEPS 4
 
 // ========== AUDIO (MAX98357A) ==========
 #define AUDIO_BCLK      4

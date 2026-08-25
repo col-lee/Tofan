@@ -33,6 +33,7 @@ public:
         cfg.pin_mosi = 38;
         cfg.pin_dc = 41;
         cfg.freq_write = 80000000;
+
         _bus_instance.config(cfg);
         _panel_instance.setBus(&_bus_instance);
         auto p_cfg = _panel_instance.config();

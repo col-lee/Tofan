@@ -66,7 +66,7 @@ void DisplayManager::createUISprite() {
 
 void DisplayManager::deleteUISprite() {
     // 🌟 3. เลิกใช้ delete เพราะไม่ใช่ Pointer แล้ว
-    if (spr.getBuffer() == nullptr) {
+    if (spr.getBuffer() != nullptr) {
         tft.fillScreen(TFT_BLACK);
         spr.deleteSprite();
     }

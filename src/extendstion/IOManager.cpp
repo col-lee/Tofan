@@ -16,9 +16,6 @@ void IOManager::initPins() {
     digitalWrite(LED_PIN, LOW);
     ledState = false;
 
-    // Initialize buttons as input
-    pinMode(BTN_BACK_PIN, INPUT);
-
     Serial.println("IO Manager initialized");
 }
 
