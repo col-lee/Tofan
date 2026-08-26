@@ -1,4 +1,5 @@
 #include "Network.hpp"
+#include "AIConversation.hpp"
 #include "FileManager.hpp"
 #include <stdlib.h>
 #include <string.h>
@@ -340,6 +341,8 @@ void NetworkManager::startAdminMode() {
 
       server.on("/wifiManager", HTTP_GET, [](AsyncWebServerRequest *request)
                 { request->send(SD, "/WEB_Source/WiFiManger/wifiManager.html", "text/html"); });
+
+      aiConversation.registerWebRoutes(server);
 
       server.on("/wifi", HTTP_OPTIONS, [](AsyncWebServerRequest *request)
                 {

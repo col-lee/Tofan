@@ -6,9 +6,10 @@
 #include "extendstion/FileManager.hpp"
 #include "extendstion/Network.hpp"
 #include "extendstion/SoundManager.hpp"
-// #include "extendstion/IOManager.hpp"
+#include "extendstion/IOManager.hpp"
 #include "extendstion/HardwareManager.hpp"
-#include "extendstion/config.hpp"
+#include "extendstion/AIConversation.hpp"
+// #include "extendstion/config.hpp"
 
 #ifndef DISPLAYMANAGER_HH
 #define DISPLAYMANAGER_HH
@@ -47,6 +48,64 @@ unsigned long lastVolActivityTime = 0;
 
 static unsigned long lastTouchTime = 0;
 
+static constexpr unsigned long AI_PET_RECORDING_MS = 5000;
+static const char* AI_PET_RECORDING_PATH = "/main/ai_pet_input.wav";
+static bool aiPetListening = false;
+static volatile bool aiPetProcessing = false;
+static unsigned long aiPetRecordingStartedAt = 0;
+
+static void processAIPetVoice(void* parameter) {
+    String responseBody;
+    String audioUrl;
+    bool success = aiConversation.submitAudioFile(AI_PET_RECORDING_PATH, responseBody);
+    if (success && aiConversation.extractAudioUrl(responseBody, audioUrl)) {
+        AUDIO_COMMAND command{};
+        command.module = AUDIO_COMMAND::MODULE::AUDIO;
+        command.audio_state = AUDIO_COMMAND::AUDIO_STATE::PLAY;
+        command.path = audioUrl;
+        xQueueSend(audio_command, &command, portMAX_DELAY);
+        Serial.println("AI voice response queued for playback");
+    } else {
+        Serial.println("AI voice response did not contain a playable audioUrl");
+    }
+    aiPetProcessing = false;
+    vTaskDelete(nullptr);
+}
+
+static void startAIPetListening() {
+    if (aiPetListening || aiPetProcessing || !aiConversation.isConfigured()) return;
+    if (!enterRecordingMode() || !startRecording(AI_PET_RECORDING_PATH)) {
+        exitRecordingMode();
+        Serial.println("Unable to start AI Pet recording");
+        return;
+    }
+    aiPetListening = true;
+    aiPetRecordingStartedAt = millis();
+    Serial.println("AI Pet listening...");
+}
+
+static void updateAIPetListening() {
+    if (aiPetListening) {
+        recordLoop();
+        if (millis() - aiPetRecordingStartedAt >= AI_PET_RECORDING_MS) {
+            stopRecording();
+            isRecordingMode = false;
+            aiPetListening = false;
+            aiPetProcessing = true;
+            if (xTaskCreatePinnedToCore(processAIPetVoice, "AIPetVoice", 8192, nullptr, 3, nullptr, 0) != pdPASS) {
+                aiPetProcessing = false;
+                Serial.println("Unable to create AI Pet task");
+            }
+        }
+    }
+}
+
+static void stopAIPetListening() {
+    if (aiPetListening) stopRecording();
+    aiPetListening = false;
+    isRecordingMode = false;
+}
+
 void IRAM_ATTR readEncoderISR() {
     rotaryEncoder.readEncoder_ISR();
 }
@@ -65,6 +124,10 @@ void handleInput() {
 
             DISM.isAnimatingMenu = true;
         } 
+        else if (DISM.currentState == UI_STATE::DEBUG) {
+            DISM.debugSelectedIndex = rotaryEncoder.readEncoder();
+            DISM.debug();
+        }
         else if (DISM.currentState == UI_STATE::APP_MUSIC) {
             DISM.currentMusicControlIndex = rotaryEncoder.readEncoder();
             DISM.drawMusicPlayer(currentSongTitle, currentAudioProgress, isPlayingAudio);
@@ -160,10 +223,15 @@ void handleInput() {
 
                 case 3:
                     DISM.currentState = UI_STATE::APP_PET;
+                    startAIPetListening();
                     DISM.drawAIPet();
                     break;
 
                 case 4:
+                    DISM.debugSelectedIndex = 0;
+                    DISM.debugScrollOffset = 0;
+                    rotaryEncoder.setBoundaries(0, hwManager.getDeviceCount() - 1, false);
+                    rotaryEncoder.setEncoderValue(DISM.debugSelectedIndex);
                     DISM.currentState = UI_STATE::DEBUG;
                     DISM.debug();
                     break;
@@ -466,6 +534,7 @@ void handleInput() {
                 }
 
                 else if(DISM.currentState == UI_STATE::APP_PET) {
+                    stopAIPetListening();
                     rotaryEncoder.setBoundaries(-DISM.boundaries_home, DISM.boundaries_home, false);
                     rotaryEncoder.setEncoderValue(DISM.animatedMenuIndex_target);
                     DISM.currentState = UI_STATE::HOME_MENU;
@@ -507,6 +576,8 @@ void handleInput() {
 void setup() {
   Serial.begin(115200);
   Serial.println("start...");
+
+    aiConversation.begin();
 
   rotaryEncoder.begin();
   rotaryEncoder.setup(readEncoderISR);
@@ -602,6 +673,7 @@ void setup() {
   delay(100);
 
   DISM.currentState = UI_STATE::APP_PET;
+    startAIPetListening();
   DISM.drawAIPet();
 
 //   if(isDisplay_install && isFileManager_install && isNetwork_install && isAudio_install) {
@@ -653,6 +725,7 @@ void loop() {
 
     if (DISM.currentState == UI_STATE::APP_PET)
     {
+        updateAIPetListening();
         // สุ่มเปลี่ยนอารมณ์ทุกๆ 8 วินาที
         if (millis() - DISM.lastMoodChange > 3000)
         {

@@ -93,6 +93,9 @@ public:
     int imageSelectedIndex = 0;
     int imageScrollOffset = 0;
 
+    int debugSelectedIndex = 0;
+    int debugScrollOffset = 0;
+
     DisplayManager();
     ~DisplayManager();
 

@@ -800,6 +800,13 @@ void DisplayManager::drawAIPet(bool pushToScreen) {
             break;
     }
 
+    // Open the mouth from live microphone amplitude while listening or playing.
+    float voiceActivity = abs((int)readMicData()) / 12000.0f;
+    if (voiceActivity > 1.0f) voiceActivity = 1.0f;
+    if (isRecording || isPlayingAudio) {
+        tar_mouthH += voiceActivity * 26.0f;
+    }
+
     // --- สมการ Lerp (Smooth Transition) ---
     float speed = 0.25; 
     float gazeSpeed = 0.35; 
@@ -905,16 +912,74 @@ void DisplayManager::debug() {
     spr.drawString("HARDWARE DEBUG STATUS", 5, 5, 2);
     spr.drawLine(5, 25, tft.width() - 5, 25, C_HILITE);
 
-    // Display devices status
-    int startY = 35;
-    int itemHeight = 28;
-    int devicesPerScreen = 7;
+    // Memory status panel
+    const uint32_t sramTotal = ESP.getHeapSize();
+    const uint32_t sramFree = ESP.getFreeHeap();
+    const uint32_t psramTotal = psramFound() ? ESP.getPsramSize() : 0;
+    const uint32_t psramFree = psramFound() ? ESP.getFreePsram() : 0;
+    const uint32_t flashTotal = ESP.getFlashChipSize();
+    const uint32_t flashUsed = ESP.getSketchSize();
+    const uint32_t flashFree = flashTotal > flashUsed ? flashTotal - flashUsed : 0;
+
+    const int memoryBoxY = 32;
+    const int memoryBoxH = 91;
+    spr.drawRect(5, memoryBoxY, tft.width() - 10, memoryBoxH, C_HILITE);
+    spr.setTextColor(C_TEXT);
+    spr.setTextDatum(TL_DATUM);
+    spr.drawString("Memory (Total / Used / Free)", 10, memoryBoxY + 5, 1);
+
+    char memoryInfo[80];
+    snprintf(memoryInfo, sizeof(memoryInfo), "SRAM : %lu / %lu / %lu KB",
+        sramTotal / 1024,
+        (sramTotal - sramFree) / 1024,
+        sramFree / 1024);
+    spr.drawString(memoryInfo, 10, memoryBoxY + 22, 1);
+
+    snprintf(memoryInfo, sizeof(memoryInfo), "PSRAM: %lu / %lu / %lu KB",
+        psramTotal / 1024,
+        (psramTotal - psramFree) / 1024,
+        psramFree / 1024);
+    spr.drawString(memoryInfo, 10, memoryBoxY + 39, 1);
+
+    snprintf(memoryInfo, sizeof(memoryInfo), "FLASH: %lu / %lu / %lu KB",
+        flashTotal / 1024,
+        flashUsed / 1024,
+        flashFree / 1024);
+    spr.drawString(memoryInfo, 10, memoryBoxY + 56, 1);
+
+    spr.setTextColor(C_HILITE);
+    spr.drawString("Flash used = firmware size", 10, memoryBoxY + 73, 1);
+
+    // Display devices status with encoder scrolling
+    const int startY = memoryBoxY + memoryBoxH + 5;
+    const int itemHeight = 28;
+    const int listBottom = tft.height() - 23;
+    const int devicesPerScreen = max(1, (listBottom - startY) / itemHeight);
 
     int totalDevices = hwManager.getDeviceCount();
 
-    for (int i = 0; i < devicesPerScreen && i < totalDevices; i++) {
-        HardwareDevice dev = hwManager.getDevice(i);
-        int yPos = startY + (i * itemHeight);
+    if (totalDevices > 0) {
+        if (debugSelectedIndex < 0) debugSelectedIndex = 0;
+        if (debugSelectedIndex >= totalDevices) debugSelectedIndex = totalDevices - 1;
+        if (debugSelectedIndex < debugScrollOffset) debugScrollOffset = debugSelectedIndex;
+        if (debugSelectedIndex >= debugScrollOffset + devicesPerScreen) {
+            debugScrollOffset = debugSelectedIndex - devicesPerScreen + 1;
+        }
+
+        int maxScrollOffset = max(0, totalDevices - devicesPerScreen);
+        if (debugScrollOffset > maxScrollOffset) debugScrollOffset = maxScrollOffset;
+    }
+
+    for (int row = 0; row < devicesPerScreen; row++) {
+        int deviceIndex = debugScrollOffset + row;
+        if (deviceIndex >= totalDevices) break;
+
+        HardwareDevice dev = hwManager.getDevice(deviceIndex);
+        int yPos = startY + (row * itemHeight);
+
+        if (deviceIndex == debugSelectedIndex) {
+            spr.fillRoundRect(5, yPos - 2, tft.width() - 10, itemHeight - 2, 4, C_HILITE);
+        }
 
         // Draw status indicator circle
         uint16_t statusColor;
@@ -935,7 +1000,7 @@ void DisplayManager::debug() {
         spr.fillCircle(12, yPos + 8, 4, statusColor);
 
         // Device name
-        spr.setTextColor(C_TEXT);
+        spr.setTextColor(deviceIndex == debugSelectedIndex ? C_BG : C_TEXT);
         spr.setTextDatum(TL_DATUM);
         spr.drawString(dev.name, 25, yPos, 1);
 
@@ -946,36 +1011,9 @@ void DisplayManager::debug() {
         spr.drawString(statusStr, tft.width() - 5, yPos, 1);
 
         // Details
-        spr.setTextColor(C_HILITE);
+        spr.setTextColor(deviceIndex == debugSelectedIndex ? C_BG : C_HILITE);
         spr.setTextDatum(TL_DATUM);
         spr.drawString(dev.details, 25, yPos + 12, 1);
-    }
-
-    // System info box
-    int sysBoxY = startY + (devicesPerScreen * itemHeight) - 10;
-    spr.drawRect(5, sysBoxY, tft.width() - 10, 50, C_HILITE);
-
-    spr.setTextColor(C_TEXT);
-    spr.setTextDatum(TL_DATUM);
-    spr.drawString("System Resources:", 10, sysBoxY + 5, 1);
-
-    char sysInfo[128];
-    snprintf(sysInfo, sizeof(sysInfo), "RAM: %luKB | Min: %luKB",
-        ESP.getFreeHeap() / 1024,
-        ESP.getMinFreeHeap() / 1024);
-    spr.drawString(sysInfo, 10, sysBoxY + 20, 1);
-
-    char taskInfo[128];
-    snprintf(taskInfo, sizeof(taskInfo), "Tasks - Audio:%u Dis:%u Net:%u",
-        uxTaskGetStackHighWaterMark(t_handleAudio),
-        uxTaskGetStackHighWaterMark(t_handleDisplay),
-        uxTaskGetStackHighWaterMark(runnet));
-    spr.drawString(taskInfo, 10, sysBoxY + 32, 1);
-
-    if (psramFound()) {
-        char psramInfo[64];
-        snprintf(psramInfo, sizeof(psramInfo), "PSRAM: %luKB avail", ESP.getFreePsram() / 1024);
-        spr.drawString(psramInfo, 10, sysBoxY + 44, 1);
     }
 
     // Navigation hint
