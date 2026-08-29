@@ -9,6 +9,7 @@
 #include "extendstion/IOManager.hpp"
 #include "extendstion/HardwareManager.hpp"
 #include "extendstion/AIConversation.hpp"
+#include "extendstion/RGBLed.hpp"
 // #include "extendstion/config.hpp"
 
 #ifndef DISPLAYMANAGER_HH
@@ -577,6 +578,8 @@ void setup() {
   Serial.begin(115200);
   Serial.println("start...");
 
+    rgbLed.begin();
+
     aiConversation.begin();
 
   rotaryEncoder.begin();
@@ -687,6 +690,8 @@ void setup() {
 }
    
 void loop() {
+
+    rgbLed.update();
 
     if (autoPlayNext) {
         autoPlayNext = false; // ปิดธงสัญญาณ

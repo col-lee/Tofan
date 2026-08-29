@@ -45,6 +45,12 @@
 // ========== LED INDICATOR ==========
 #define LED_PIN         18
 
+// ========== BUILT-IN RGB LED (ESP32-S3-DevKitC-1) ==========
+#define RGB_LED_PIN         48
+#define RGB_LED_COUNT       1
+#define RGB_LED_BRIGHTNESS  32
+#define RGB_LED_INTERVAL_MS 20
+
 // ========== TASK STACK SIZES (bytes) ==========
 #define TASK_STACK_AUDIO      (4 * 1024)
 #define TASK_STACK_NETWORK    (4 * 1024)
