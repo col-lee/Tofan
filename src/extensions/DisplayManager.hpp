@@ -6,11 +6,9 @@
 #include <AnimatedGIF.h>
 #include <vector>
 
-#define USE_SPI_BUFFER
-#define minimum(a,b)     (((a) < (b)) ? (a) : (b))
+namespace ui {
 
-// State ของหน้าจอทั้งหมด
-enum class UI_STATE {
+enum class State {
     BOOT_LOADING,
     HOME_MENU,
     APP_DISPLAY,
@@ -25,6 +23,14 @@ enum class UI_STATE {
     DEBUG,
     RECORDE
 };
+
+} // namespace ui
+
+#define USE_SPI_BUFFER
+#define minimum(a,b)     (((a) < (b)) ? (a) : (b))
+
+// State ของหน้าจอทั้งหมด
+using UI_STATE = ui::State;
 
 class DisplayManager {
 private:

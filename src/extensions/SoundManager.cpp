@@ -2,6 +2,7 @@
 #include "DisplayManager.hpp"
 #include "FileManager.hpp"
 #include "Network.hpp"
+#include "../core/GlobalState.hpp"
 #include <ArduinoJson.h>
 #include "ToFan-project-1_inferencing.h"
 
@@ -123,7 +124,7 @@ int16_t readMicData() {
 }
 
 void detectWord() {
-    if (!microphoneReady || isRecordingMode) return;
+    if (!microphoneReady || app::runtime.isRecordingMode) return;
 
     bool m = microphone_inference_record();
     if (!m) {
@@ -202,8 +203,8 @@ static void capture_samples(void* arg) {
         if (sampleCount == 0) continue;
         microphoneLastSampleMillis = millis();
 
-        if (isRecordingMode) {
-            if (!isRecording || recorderQueue == nullptr) continue;
+        if (app::runtime.isRecordingMode) {
+            if (!app::runtime.isRecording || recorderQueue == nullptr) continue;
 
             RecorderFrame frame{};
             frame.sampleCount = sampleCount;
@@ -215,7 +216,7 @@ static void capture_samples(void* arg) {
             }
             microphoneLevel = frame.samples[sampleCount - 1];
 
-            if (isRecording && xQueueSend(recorderQueue, &frame, 0) != pdPASS) {
+            if (app::runtime.isRecording && xQueueSend(recorderQueue, &frame, 0) != pdPASS) {
                 recordingDroppedFrames++;
             }
             continue;
@@ -507,8 +508,8 @@ void audio_eof_mp3(const char *info){
 bool enterRecordingMode() {
     if (!microphoneReady || recorderQueue == nullptr) return false;
 
-    isRecording = false;
-    isRecordingMode = true;
+    app::runtime.isRecording = false;
+    app::runtime.isRecordingMode = true;
     inference.buf_count = 0;
     inference.buf_ready = 0;
     xQueueReset(recorderQueue);
@@ -517,15 +518,15 @@ bool enterRecordingMode() {
 
 void exitRecordingMode() {
     stopRecording();
-    isRecording = false;
-    isRecordingMode = false;
+    app::runtime.isRecording = false;
+    app::runtime.isRecordingMode = false;
     inference.buf_count = 0;
     inference.buf_ready = 0;
     if (recorderQueue != nullptr) xQueueReset(recorderQueue);
 }
 
 bool startRecording(const char* path) {
-    if (!isRecordingMode || !isFileManager_install || recordFile || path == nullptr) {
+    if (!app::runtime.isRecordingMode || !isFileManager_install || recordFile || path == nullptr) {
         return false;
     }
     if (xSemaphoreTake(sdSemaphore, pdMS_TO_TICKS(500)) != pdTRUE) {
@@ -579,7 +580,7 @@ static bool writeRecorderFrame(const RecorderFrame& frame) {
 }
 
 void recordLoop() {
-    if (!isRecording || recorderQueue == nullptr) return;
+    if (!app::runtime.isRecording || recorderQueue == nullptr) return;
 
     RecorderFrame frame{};
     for (uint8_t index = 0; index < 2 && xQueueReceive(recorderQueue, &frame, 0) == pdPASS; ++index) {
@@ -590,7 +591,7 @@ void recordLoop() {
 void stopRecording() {
     if (!recordFile) return;
 
-    isRecording = false;
+    app::runtime.isRecording = false;
     RecorderFrame frame{};
     while (recorderQueue != nullptr && xQueueReceive(recorderQueue, &frame, 0) == pdPASS) {
         if (!writeRecorderFrame(frame)) recordingDroppedFrames++;

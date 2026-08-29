@@ -1,6 +1,7 @@
 #include "DisplayManager.hpp"
 #include "FileManager.hpp"
 #include "SoundManager.hpp"
+#include "../core/GlobalState.hpp"
 #define DISPLAYMANAGER_HH
 
 LGFX tft; 
@@ -803,7 +804,7 @@ void DisplayManager::drawAIPet(bool pushToScreen) {
     // Open the mouth from live microphone amplitude while listening or playing.
     float voiceActivity = abs((int)readMicData()) / 12000.0f;
     if (voiceActivity > 1.0f) voiceActivity = 1.0f;
-    if (isRecording || isPlayingAudio) {
+    if (app::runtime.isRecording || isPlayingAudio) {
         tar_mouthH += voiceActivity * 26.0f;
     }
 
@@ -1044,7 +1045,7 @@ void DisplayManager::recorde() {
     uint16_t statusColor;
     String statusText;
 
-    if (isRecording) {
+    if (app::runtime.isRecording) {
         statusColor = TFT_RED;
         statusText = "● RECORDING";
     } else {
@@ -1060,7 +1061,7 @@ void DisplayManager::recorde() {
     unsigned long currentMillis = millis();
     if (currentMillis - previousMillis >= interval) {
         previousMillis = currentMillis;
-        if (isRecording) {
+        if (app::runtime.isRecording) {
             seconds += 1;
         }
     }
@@ -1079,7 +1080,7 @@ void DisplayManager::recorde() {
     int btnRadius = 40;
 
     // Draw button circle
-    if (isRecording) {
+    if (app::runtime.isRecording) {
         // Stop button (red square)
         spr.fillRect(btnX - 25, btnY - 25, 50, 50, TFT_RED);
         spr.drawRect(btnX - 25, btnY - 25, 50, 50, tft.color565(150, 0, 0));  // Dark red
@@ -1093,7 +1094,7 @@ void DisplayManager::recorde() {
     spr.setTextColor(TFT_WHITE);
     spr.setTextFont(1);
     spr.setTextDatum(MC_DATUM);
-    if (isRecording) {
+    if (app::runtime.isRecording) {
         spr.drawString("STOP", btnX, btnY);
     } else {
         spr.drawString("REC", btnX, btnY);

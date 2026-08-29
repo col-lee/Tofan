@@ -1,3 +1,7 @@
+#pragma once
+
+#include <Arduino.h>
+
 struct DISPLAY_COMMAND {
   enum MODULE {DIS, AUDIO} module;
   enum DISPLAY_STATE {SHOW, CLEAR} display_state;
