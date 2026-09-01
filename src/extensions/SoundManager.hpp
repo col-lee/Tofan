@@ -40,7 +40,6 @@ uint32_t getRecordingDroppedFrames();
 
 void detectWord();
 
-// ประกาศฟังก์ชัน Callback ของไลบรารี I2S
 void audio_info(const char *info);
 void audio_id3data(const char *info);
 void audio_eof_mp3(const char *info);

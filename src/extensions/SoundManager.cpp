@@ -9,7 +9,6 @@
 Audio audio;
 bool isAudio_install;
 
-// เพิ่มบรรทัดนี้เพื่อจำ Path ไฟล์ที่เล่นล่าสุด
 String currentFilePath = ""; 
 
 String currentSongTitle = "Unknown";
@@ -65,21 +64,27 @@ static int microphone_audio_signal_get_data(size_t offset, size_t length, float 
 static int i2s_init(uint32_t samplingRate);
 static bool writeRecorderFrame(const RecorderFrame& frame);
 
+static int16_t convertI2SSample(int32_t rawSample) {
+    int32_t sample = (rawSample >> 16) * 16;
+    if (sample > 32767) sample = 32767;
+    if (sample < -32768) sample = -32768;
+    return static_cast<int16_t>(sample);
+}
 
 struct wav_header_t {
   char chunkID[4] = {'R', 'I', 'F', 'F'};
-  uint32_t chunkSize; // จะถูกเติมทีหลังตอนอัดเสร็จ
+  uint32_t chunkSize;
   char format[4] = {'W', 'A', 'V', 'E'};
   char subchunk1ID[4] = {'f', 'm', 't', ' '};
   uint32_t subchunk1Size = 16;
-  uint16_t audioFormat = 1; // PCM
-  uint16_t numChannels = 1; // Mono
+  uint16_t audioFormat = 1;
+  uint16_t numChannels = 1;
   uint32_t sampleRate = 16000;
   uint32_t byteRate = 16000 * 1 * 16 / 8;
   uint16_t blockAlign = 1 * 16 / 8;
   uint16_t bitsPerSample = 16;
   char subchunk2ID[4] = {'d', 'a', 't', 'a'};
-  uint32_t subchunk2Size; // จะถูกเติมทีหลังตอนอัดเสร็จ
+  uint32_t subchunk2Size;
 };
 
 File recordFile;
@@ -187,7 +192,7 @@ static void audio_inference_callback(uint32_t n_samples)
 }
 
 static void capture_samples(void* arg) {
-    const uint32_t i2sBytesToRead = (uint32_t)arg;
+    const uint32_t i2sBytesToRead = sizeof(raw32_buffer);
     size_t bytesRead = 0;
     microphoneCapturing = true;
 
@@ -209,10 +214,7 @@ static void capture_samples(void* arg) {
             RecorderFrame frame{};
             frame.sampleCount = sampleCount;
             for (uint16_t index = 0; index < sampleCount; ++index) {
-                int32_t sample = (raw32_buffer[index] >> 16) * 16;
-                if (sample > INT16_MAX) sample = INT16_MAX;
-                if (sample < INT16_MIN) sample = INT16_MIN;
-                frame.samples[index] = static_cast<int16_t>(sample);
+                frame.samples[index] = convertI2SSample(raw32_buffer[index]);
             }
             microphoneLevel = frame.samples[sampleCount - 1];
 
@@ -223,10 +225,7 @@ static void capture_samples(void* arg) {
         }
 
         for (uint16_t index = 0; index < sampleCount; ++index) {
-            int32_t sample = (raw32_buffer[index] >> 16) * 16;
-            if (sample > INT16_MAX) sample = INT16_MAX;
-            if (sample < INT16_MIN) sample = INT16_MIN;
-            sampleBuffer[index] = static_cast<int16_t>(sample);
+            sampleBuffer[index] = convertI2SSample(raw32_buffer[index]);
         }
         microphoneLevel = sampleBuffer[sampleCount - 1];
         audio_inference_callback(sampleCount);
@@ -282,7 +281,7 @@ static bool microphone_inference_start(uint32_t n_samples)
 
     record_status = true;
     const BaseType_t taskCreated = xTaskCreate(capture_samples, "CaptureSamples", 4096,
-                                                (void*)sample_buffer_size, 10, &microphoneTask);
+                                                nullptr, 10, &microphoneTask);
     if (taskCreated != pdPASS) {
         vQueueDelete(recorderQueue);
         recorderQueue = nullptr;
@@ -302,21 +301,16 @@ static bool microphone_inference_start(uint32_t n_samples)
  *
  * @return     True when finished
  */
-// 🌟 โค้ดที่แก้ไขแล้ว (Non-blocking: ลื่นไหล 100%)
 static bool microphone_inference_record(void)
 {
     if (inference.buf_ready == 0) {
-        // ถังยังไม่เต็ม → Non-blocking return
         return false;
     }
 
     if (inference.buf_ready > 1) {
-        // Overrun: Task AI ช้าเกินไป ถังถูกเขียนทับก่อนอ่าน
-        // Log เตือนไว้ แต่ยังทำงานต่อได้
         ei_printf("Warn: Buffer overrun (%d)\n", inference.buf_ready);
     }
 
-    // ไม่ว่าจะ overrun หรือปกติ ให้รีเซ็ตเป็น 0 แล้วคืน true เสมอ
     inference.buf_ready = 0;
     return true;
 }
@@ -326,7 +320,6 @@ static bool microphone_inference_record(void)
  */
 static int microphone_audio_signal_get_data(size_t offset, size_t length, float *out_ptr)
 {
-    // buf_select ^ 1 = อ่าน buffer ที่ "เพิ่งเต็ม" (ไม่ใช่ตัวที่กำลังเขียนอยู่) ถูกต้องแล้ว
     numpy::int16_to_float(&inference.buffers[inference.buf_select ^ 1][offset], out_ptr, length);
     return 0;
 }
@@ -384,7 +377,6 @@ void handleAudio(void *parameter) {
   unsigned long lastWsUpdate = 0;
   
   for(;;) {
-    // 1. รับคำสั่งจาก Queue (รองรับระบบเดิม)
     if (xQueueReceive(audio_command, &cmd, 0) == pdPASS) {
       if (cmd.module == AUDIO_COMMAND::MODULE::AUDIO) {
         switch (cmd.audio_state) {
@@ -398,7 +390,6 @@ void handleAudio(void *parameter) {
                   audio.connecttohost(currentFilePath.c_str());
                   currentSongTitle = "Connecting..."; // ตั้งชื่อรอไว้ก่อน
               } else {
-                  // 👉 โหมด SD Card (ทำงานเหมือนเดิมเป๊ะ)
                   if(xSemaphoreTake(sdSemaphore, pdMS_TO_TICKS(500)) == pdTRUE) {
                     audio.connecttoSD(currentFilePath.c_str());
                     xSemaphoreGive(sdSemaphore);
@@ -443,7 +434,6 @@ void handleAudio(void *parameter) {
       }
     }
     
-    // 2. ลูปการทำงานของ Audio
     if (isConnectSDcard) {
       if (currentState == STATE_PLAYING) {
         if(xSemaphoreTake(sdSemaphore, pdMS_TO_TICKS(5)) == pdTRUE) {
@@ -452,11 +442,9 @@ void handleAudio(void *parameter) {
         }
       }
       
-      // 3. อัปเดต % ความคืบหน้าเพลงสำหรับ UI
-
       if (currentState == STATE_PLAYING && (millis() - lastProgressUpdate >= 1000)) {
             totalAudioDuration = audio.getAudioFileDuration();
-            currentAudioTime = audio.getAudioCurrentTime(); // 🌟 ดึงเวลาปัจจุบันมาเก็บไว้
+            currentAudioTime = audio.getAudioCurrentTime();
             
             if(totalAudioDuration > 0) {
                 currentAudioProgress = (currentAudioTime * 100) / totalAudioDuration;
@@ -529,6 +517,8 @@ bool startRecording(const char* path) {
     if (!app::runtime.isRecordingMode || !isFileManager_install || recordFile || path == nullptr) {
         return false;
     }
+    app::runtime.isRecording = false;
+
     if (xSemaphoreTake(sdSemaphore, pdMS_TO_TICKS(500)) != pdTRUE) {
         Serial.println("SD busy");
         return false;
@@ -551,17 +541,19 @@ bool startRecording(const char* path) {
     header.chunkSize = 36;
     header.subchunk2Size = 0;
     const bool headerWritten = recordFile.write(reinterpret_cast<const uint8_t*>(&header), sizeof(header)) == sizeof(header);
-    xSemaphoreGive(sdSemaphore);
 
     if (!headerWritten) {
         recordFile.close();
+        xSemaphoreGive(sdSemaphore);
         Serial.println("Unable to write WAV header");
         return false;
     }
+    xSemaphoreGive(sdSemaphore);
 
     totalSize = 0;
     recordingDroppedFrames = 0;
     xQueueReset(recorderQueue);
+    app::runtime.isRecording = true;
     Serial.println("Recording started");
     return true;
 }
@@ -598,6 +590,7 @@ void stopRecording() {
     }
 
     if (xSemaphoreTake(sdSemaphore, pdMS_TO_TICKS(500)) != pdTRUE) {
+        recordFile.close();
         Serial.println("Unable to finalize recording");
         return;
     }

@@ -900,7 +900,6 @@ void DisplayManager::drawAIPet(bool pushToScreen) {
 void DisplayManager::debug() {
     if(spr.getBuffer() == nullptr) return;
 
-    // Update hardware status
     hwManager.updateAllStatus();
 
     spr.fillSprite(C_BG);
@@ -908,12 +907,9 @@ void DisplayManager::debug() {
     spr.setTextFont(1);
     spr.setTextSize(1);
 
-    // Header
     spr.setTextDatum(TL_DATUM);
-    spr.drawString("HARDWARE DEBUG STATUS", 5, 5, 2);
-    spr.drawLine(5, 25, tft.width() - 5, 25, C_HILITE);
+    spr.drawString("HARDWARE DEBUG", 5, 5, 2);
 
-    // Memory status panel
     const uint32_t sramTotal = ESP.getHeapSize();
     const uint32_t sramFree = ESP.getFreeHeap();
     const uint32_t psramTotal = psramFound() ? ESP.getPsramSize() : 0;
@@ -922,39 +918,23 @@ void DisplayManager::debug() {
     const uint32_t flashUsed = ESP.getSketchSize();
     const uint32_t flashFree = flashTotal > flashUsed ? flashTotal - flashUsed : 0;
 
-    const int memoryBoxY = 32;
-    const int memoryBoxH = 91;
-    spr.drawRect(5, memoryBoxY, tft.width() - 10, memoryBoxH, C_HILITE);
-    spr.setTextColor(C_TEXT);
-    spr.setTextDatum(TL_DATUM);
-    spr.drawString("Memory (Total / Used / Free)", 10, memoryBoxY + 5, 1);
-
     char memoryInfo[80];
-    snprintf(memoryInfo, sizeof(memoryInfo), "SRAM : %lu / %lu / %lu KB",
+    snprintf(memoryInfo, sizeof(memoryInfo), "SRAM %lu/%luKB  PSRAM %lu/%luKB",
+        sramFree / 1024,
         sramTotal / 1024,
-        (sramTotal - sramFree) / 1024,
-        sramFree / 1024);
-    spr.drawString(memoryInfo, 10, memoryBoxY + 22, 1);
+        psramFree / 1024,
+        psramTotal / 1024);
+    spr.drawString(memoryInfo, 5, 28, 1);
 
-    snprintf(memoryInfo, sizeof(memoryInfo), "PSRAM: %lu / %lu / %lu KB",
-        psramTotal / 1024,
-        (psramTotal - psramFree) / 1024,
-        psramFree / 1024);
-    spr.drawString(memoryInfo, 10, memoryBoxY + 39, 1);
+    snprintf(memoryInfo, sizeof(memoryInfo), "FLASH free %luKB  used %luKB",
+        flashFree / 1024,
+        flashUsed / 1024);
+    spr.drawString(memoryInfo, 5, 41, 1);
+    spr.drawLine(5, 56, tft.width() - 5, 56, C_HILITE);
 
-    snprintf(memoryInfo, sizeof(memoryInfo), "FLASH: %lu / %lu / %lu KB",
-        flashTotal / 1024,
-        flashUsed / 1024,
-        flashFree / 1024);
-    spr.drawString(memoryInfo, 10, memoryBoxY + 56, 1);
-
-    spr.setTextColor(C_HILITE);
-    spr.drawString("Flash used = firmware size", 10, memoryBoxY + 73, 1);
-
-    // Display devices status with encoder scrolling
-    const int startY = memoryBoxY + memoryBoxH + 5;
-    const int itemHeight = 28;
-    const int listBottom = tft.height() - 23;
+    const int startY = 62;
+    const int itemHeight = 20;
+    const int listBottom = tft.height() - 16;
     const int devicesPerScreen = max(1, (listBottom - startY) / itemHeight);
 
     int totalDevices = hwManager.getDeviceCount();
@@ -982,7 +962,6 @@ void DisplayManager::debug() {
             spr.fillRoundRect(5, yPos - 2, tft.width() - 10, itemHeight - 2, 4, C_HILITE);
         }
 
-        // Draw status indicator circle
         uint16_t statusColor;
         switch (dev.status) {
             case DEVICE_STATUS::WORKING:
@@ -995,32 +974,28 @@ void DisplayManager::debug() {
                 statusColor = TFT_RED;
                 break;
             default:
-                statusColor = TFT_DARKGRAY;
+                statusColor = C_HILITE;
         }
 
         spr.fillCircle(12, yPos + 8, 4, statusColor);
 
-        // Device name
         spr.setTextColor(deviceIndex == debugSelectedIndex ? C_BG : C_TEXT);
         spr.setTextDatum(TL_DATUM);
         spr.drawString(dev.name, 25, yPos, 1);
 
-        // Status string
         String statusStr = hwManager.getStatusString(dev.status);
         spr.setTextDatum(TR_DATUM);
         spr.setTextColor(statusColor);
         spr.drawString(statusStr, tft.width() - 5, yPos, 1);
 
-        // Details
         spr.setTextColor(deviceIndex == debugSelectedIndex ? C_BG : C_HILITE);
         spr.setTextDatum(TL_DATUM);
         spr.drawString(dev.details, 25, yPos + 12, 1);
     }
 
-    // Navigation hint
     spr.setTextColor(C_HILITE);
     spr.setTextDatum(BC_DATUM);
-    spr.drawString("Back to exit debug menu", tft.width() / 2, tft.height() - 5, 1);
+    spr.drawString("Back: exit", tft.width() / 2, tft.height() - 3, 1);
 
     if (xSemaphoreTake(displaySemaphore, portMAX_DELAY) == pdTRUE) {
         spr.pushSprite(0, 0);
@@ -1031,33 +1006,29 @@ void DisplayManager::debug() {
 void DisplayManager::recorde() {
     if(spr.getBuffer() == nullptr) return;
 
-    // Redraw UI every frame
     spr.fillSprite(C_BG);
 
-    // Header
     spr.setTextColor(C_TEXT);
     spr.setTextFont(2);
     spr.setTextDatum(MC_DATUM);
-    spr.drawString("Voice Recording", tft.width() / 2, 30, 2);
+    spr.drawString("Voice Recording", tft.width() / 2, 24, 2);
 
-    // Recording status indicator with color
     spr.setTextFont(1);
     uint16_t statusColor;
     String statusText;
 
     if (app::runtime.isRecording) {
         statusColor = TFT_RED;
-        statusText = "● RECORDING";
+        statusText = "RECORDING";
     } else {
         statusColor = TFT_DARKGRAY;
-        statusText = "● READY";
+        statusText = "READY";
     }
 
     spr.setTextColor(statusColor);
     spr.setTextDatum(MC_DATUM);
-    spr.drawString(statusText, tft.width() / 2, 70, 2);
+    spr.drawString(statusText, tft.width() / 2, 56, 2);
 
-    // Timer display
     unsigned long currentMillis = millis();
     if (currentMillis - previousMillis >= interval) {
         previousMillis = currentMillis;
@@ -1072,25 +1043,20 @@ void DisplayManager::recorde() {
     int mins = seconds / 60;
     int secs = seconds % 60;
     snprintf(timeStr, sizeof(timeStr), "%02d:%02d", mins, secs);
-    spr.drawString(timeStr, tft.width() / 2, 130);
+    spr.drawString(timeStr, tft.width() / 2, 94);
 
-    // Record button area
     int btnX = tft.width() / 2;
-    int btnY = 200;
-    int btnRadius = 40;
+    int btnY = 153;
+    int btnRadius = 36;
 
-    // Draw button circle
     if (app::runtime.isRecording) {
-        // Stop button (red square)
         spr.fillRect(btnX - 25, btnY - 25, 50, 50, TFT_RED);
-        spr.drawRect(btnX - 25, btnY - 25, 50, 50, tft.color565(150, 0, 0));  // Dark red
+        spr.drawRect(btnX - 25, btnY - 25, 50, 50, tft.color565(150, 0, 0));
     } else {
-        // Record button (green circle)
         spr.fillCircle(btnX, btnY, btnRadius, TFT_GREEN);
-        spr.drawCircle(btnX, btnY, btnRadius, tft.color565(0, 100, 0));  // Dark green
+        spr.drawCircle(btnX, btnY, btnRadius, tft.color565(0, 100, 0));
     }
 
-    // Button label
     spr.setTextColor(TFT_WHITE);
     spr.setTextFont(1);
     spr.setTextDatum(MC_DATUM);
@@ -1100,18 +1066,16 @@ void DisplayManager::recorde() {
         spr.drawString("REC", btnX, btnY);
     }
 
-    // Instructions
     spr.setTextColor(C_HILITE);
     spr.setTextFont(1);
     spr.setTextDatum(MC_DATUM);
-    spr.drawString("Press to record/stop", tft.width() / 2, 280);
-    spr.drawString("Back to exit", tft.width() / 2, 300);
+    spr.drawString("Press: record/stop", tft.width() / 2, 214);
+    spr.drawString("Back: exit", tft.width() / 2, 229);
 
-    // File size info
     spr.setTextColor(C_TEXT);
     char fileInfo[64];
     snprintf(fileInfo, sizeof(fileInfo), "File: voice_record.wav");
-    spr.drawString(fileInfo, tft.width() / 2, 320 - 20);
+    spr.drawString(fileInfo, tft.width() / 2, 202);
 
     if (xSemaphoreTake(displaySemaphore, portMAX_DELAY) == pdTRUE) {
         spr.pushSprite(0, 0);

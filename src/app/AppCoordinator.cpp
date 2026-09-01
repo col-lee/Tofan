@@ -77,8 +77,7 @@ void AppCoordinator::updateAiPetListening() {
     if (app::runtime.aiPetListening) {
         recordLoop();
         if (millis() - app::runtime.aiPetRecordingStartedAt >= AI_PET_RECORDING_MS) {
-            stopRecording();
-            app::runtime.isRecordingMode = false;
+            exitRecordingMode();
             app::runtime.aiPetListening = false;
             app::runtime.aiPetProcessing = true;
             if (xTaskCreatePinnedToCore(processAIPetVoice, "AIPetVoice", 8192, nullptr, 3, nullptr, 0) != pdPASS) {
@@ -90,7 +89,8 @@ void AppCoordinator::updateAiPetListening() {
 }
 
 void AppCoordinator::stopAiPetListening() {
-    if (app::runtime.aiPetListening) stopRecording();
+    if (app::runtime.aiPetListening) {
+        exitRecordingMode();
+    }
     app::runtime.aiPetListening = false;
-    app::runtime.isRecordingMode = false;
 }

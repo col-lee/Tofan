@@ -1,18 +1,13 @@
-#ifndef HARDWAREMANAGER_HPP
-#define HARDWAREMANAGER_HPP
+#pragma once
 
-#include "GlobalVar.hpp"
 #include <Arduino.h>
 
-// Device status enum
 enum class DEVICE_STATUS {
-    IDLE,           // ไม่ทำงาน
-    CONNECTING,     // กำลังเชื่อมต่อ
-    WORKING,        // กำลังทำงาน
-    ERROR           // เกิดข้อผิดพลาด
+    CONNECTING,
+    WORKING,
+    ERROR
 };
 
-// Hardware device structure
 struct HardwareDevice {
     String name;
     DEVICE_STATUS status;
@@ -23,10 +18,11 @@ struct HardwareDevice {
 
 class HardwareManager {
 private:
-    HardwareDevice devices[8]; // ESP32, Display, Audio, Microphone, SDCard, WiFi, Power, Network
-    int deviceCount = 8;
+    static constexpr int DEVICE_COUNT = 8;
+    HardwareDevice devices[DEVICE_COUNT];
+    int deviceCount = DEVICE_COUNT;
     unsigned long lastCheckTime = 0;
-    const unsigned long CHECK_INTERVAL = 1000; // Check every 1 second
+    const unsigned long CHECK_INTERVAL = 1000;
 
 public:
     HardwareManager();
@@ -50,5 +46,3 @@ public:
 };
 
 extern HardwareManager hwManager;
-
-#endif

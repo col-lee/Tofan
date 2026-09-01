@@ -1,7 +1,7 @@
 #ifndef RGB_LED_HPP
 #define RGB_LED_HPP
 
-#include "config.hpp"
+#include "../core/Config.hpp"
 #include <Adafruit_NeoPixel.h>
 
 class RGBLed {

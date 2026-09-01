@@ -2,7 +2,7 @@
 #define IOMANAGER_HPP
 
 #include "GlobalVar.hpp"
-#include "config.hpp"
+#include "../core/Config.hpp"
 #include <Arduino.h>
 
 class IOManager {
@@ -14,23 +14,19 @@ public:
     IOManager();
     ~IOManager();
 
-    // Initialization
     void initPins();
 
-    // LED Control
     void setLED(bool state);
     void toggleLED();
     bool getLEDState() { return ledState; }
 
-    // Button Reading
     bool readButton(int buttonPin);
     bool isButtonPressed(int buttonPin);
 
-    // LED Diagnostics
     void blinkLED(int times, int delayMs = 100);
-    void indicateError();      // Blink red pattern
-    void indicateSuccess();    // Blink green pattern
-    void indicateConnecting(); // Blink yellow pattern
+    void indicateError();
+    void indicateSuccess();
+    void indicateConnecting();
 };
 
 extern IOManager ioManager;

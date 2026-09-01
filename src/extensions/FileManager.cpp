@@ -5,6 +5,7 @@ SPIClass vspi(FSPI);
 SemaphoreHandle_t sdSemaphore;
 bool isConnectSDcard = false;
 bool isFileManager_install;
+FileManager file_card;
 
 FileManager::FileManager()
 {
@@ -20,7 +21,7 @@ void FileManager::initSDCard()
 {
     pinMode(SD_CS, OUTPUT);
     digitalWrite(SD_CS, HIGH);
-    vspi.begin(SD_SCL, SD_MISO, SD_MOSI, SD_CS);
+    vspi.begin(SD_SCK, SD_MISO, SD_MOSI, SD_CS);
     if (SD.begin(SD_CS, vspi, 4000000)) {
         isConnectSDcard = true;
         Serial.println("SD mount card.");

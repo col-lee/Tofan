@@ -11,8 +11,9 @@ IOManager::IOManager() : ledState(false) {
 IOManager::~IOManager() {}
 
 void IOManager::initPins() {
-    // Initialize LED
     pinMode(LED_PIN, OUTPUT);
+    pinMode(BTN_BACK, BUTTON_INPUT_MODE);
+    pinMode(ENC_SW, BUTTON_INPUT_MODE);
     digitalWrite(LED_PIN, LOW);
     ledState = false;
 
@@ -29,7 +30,7 @@ void IOManager::toggleLED() {
 }
 
 bool IOManager::readButton(int buttonPin) {
-    return digitalRead(buttonPin) == HIGH;
+    return digitalRead(buttonPin) == BUTTON_ACTIVE_LEVEL;
 }
 
 bool IOManager::isButtonPressed(int buttonPin) {
@@ -47,7 +48,6 @@ void IOManager::blinkLED(int times, int delayMs) {
 }
 
 void IOManager::indicateError() {
-    // Blink fast (error pattern)
     for (int i = 0; i < 5; i++) {
         setLED(true);
         delay(100);
@@ -57,7 +57,6 @@ void IOManager::indicateError() {
 }
 
 void IOManager::indicateSuccess() {
-    // Slow blink (success pattern)
     for (int i = 0; i < 3; i++) {
         setLED(true);
         delay(300);
@@ -67,7 +66,6 @@ void IOManager::indicateSuccess() {
 }
 
 void IOManager::indicateConnecting() {
-    // Medium blink (connecting pattern)
     for (int i = 0; i < 4; i++) {
         setLED(true);
         delay(200);

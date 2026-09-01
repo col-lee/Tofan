@@ -7,7 +7,7 @@
 #include <LovyanGFX.hpp>
 
 #include "event.hpp"
-#include "config.hpp"
+#include "../core/Config.hpp"
 
 class LGFX : public lgfx::LGFX_Device {
 private:
@@ -41,6 +41,7 @@ public:
 extern LGFX tft;
 extern LGFX_Sprite spr;
 
+// Shared runtime resources used by display/audio/network modules.
 extern SemaphoreHandle_t sdSemaphore;
 extern SemaphoreHandle_t displaySemaphore;
 extern TaskHandle_t t_handleAudio;

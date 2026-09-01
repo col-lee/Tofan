@@ -34,24 +34,13 @@ void InputController::begin() {
     rotaryEncoder.setBoundaries(-DISM.boundaries_home, DISM.boundaries_home, false);
     rotaryEncoder.setEncoderValue(DISM.animatedMenuIndex_target);
     rotaryEncoder.disableAcceleration();
-    pinMode(BTN_BACK, INPUT);
-    pinMode(ENC_SW, INPUT);
+    ioManager.initPins();
 }
 
 void InputController::update() {
     if (DISM.currentState == UI_STATE::HOME_MENU && DISM.isAnimatingMenu) {
         DISM.drawHomeMenu();
         vTaskDelay(1);
-    }
-
-    if (DISM.currentState == UI_STATE::APP_PET) {
-        appCoordinator.updateAiPetListening();
-        if (millis() - DISM.lastMoodChange > 3000) {
-            DISM.petMood = random(0, 3);
-            DISM.lastMoodChange = millis();
-        }
-        DISM.drawAIPet();
-        vTaskDelay(10);
     }
 
     if (DISM.currentState == UI_STATE::GLOBAL_VOLUME) {
@@ -152,7 +141,7 @@ void InputController::handleInput() {
         }
     }
 
-    if (digitalRead(ENC_SW) == HIGH && millis() - lastTouchTime > 300) {
+    if (ioManager.isButtonPressed(ENC_SW) && millis() - lastTouchTime > BUTTON_DEBOUNCE_MS) {
         lastTouchTime = millis();
 
         if (DISM.currentState == UI_STATE::HOME_MENU) {
@@ -206,10 +195,14 @@ void InputController::handleInput() {
                     DISM.debug();
                     break;
                 case 5:
-                    DISM.currentState = UI_STATE::RECORDE;
-                    app::runtime.isRecordingMode = true;
-                    app::runtime.isRecording = false;
-                    DISM.recorde();
+                    if (enterRecordingMode()) {
+                        DISM.seconds = 0;
+                        DISM.previousMillis = millis();
+                        DISM.currentState = UI_STATE::RECORDE;
+                        DISM.recorde();
+                    } else {
+                        Serial.println("Unable to enter recording mode");
+                    }
                     break;
             }
         } else if (DISM.currentState == UI_STATE::APP_DISPLAY_LIST) {
@@ -339,16 +332,18 @@ void InputController::handleInput() {
         } else if (DISM.currentState == UI_STATE::RECORDE) {
             if (app::runtime.isRecording) {
                 stopRecording();
-                app::runtime.isRecording = false;
             } else {
-                startRecording("/main/Musics/voice_record.wav");
-                app::runtime.isRecording = true;
+                DISM.seconds = 0;
+                DISM.previousMillis = millis();
+                if (!startRecording("/main/Musics/voice_record.wav")) {
+                    Serial.println("Unable to start recording");
+                }
             }
             DISM.recorde();
         }
     }
 
-    if (digitalRead(BTN_BACK) == HIGH) {
+    if (ioManager.isButtonPressed(BTN_BACK)) {
         if (backBtnPressTime == 0) backBtnPressTime = millis();
 
         if (millis() - backBtnPressTime > 1000 && !isBackBtnLongPressed) {
@@ -411,9 +406,7 @@ void InputController::handleInput() {
                     DISM.currentState = UI_STATE::HOME_MENU;
                     DISM.drawHomeMenu();
                 } else if (DISM.currentState == UI_STATE::RECORDE) {
-                    stopRecording();
-                    app::runtime.isRecordingMode = false;
-                    app::runtime.isRecording = false;
+                    exitRecordingMode();
                     DISM.seconds = 0;
                     rotaryEncoder.setBoundaries(-DISM.boundaries_home, DISM.boundaries_home, false);
                     rotaryEncoder.setEncoderValue(DISM.animatedMenuIndex_target);

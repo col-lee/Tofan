@@ -9,6 +9,7 @@ AsyncWebServer server(80);
 AsyncWebSocket websocket("/ws");
 IPAddress apIP(192,168,4,1);
 Preferences prefs; // instance Preferences for Save ssid and password
+NetworkManager nm;
 
 bool isNetwork_install = false;
 unsigned long ota_progress_millis = 0;
@@ -126,13 +127,16 @@ void NetworkManager::closeWiFiSTA() {
   MDNS.end();
   WiFi.disconnect(true);
   WiFi.mode(WIFI_OFF);
+  isConnectWiFi = false;
   Serial.println("WiFi off.");
 }
 
 bool NetworkManager::connectoWiFi(const char *ssid, const char *password)
 {
 
-  if(ssid == nullptr && password == nullptr && strlen(ssid) == 0 && strlen(password) == 0) {
+  isConnectWiFi = false;
+
+  if(ssid == nullptr || password == nullptr || strlen(ssid) == 0 || strlen(password) == 0) {
     Serial.println("ssid or password is invalid or null.");
     return false;
   }
@@ -158,6 +162,7 @@ bool NetworkManager::connectoWiFi(const char *ssid, const char *password)
       }
       WiFi.disconnect();
       vTaskDelay(pdMS_TO_TICKS(100));
+      isConnectWiFi = false;
       return false;
     }
       
@@ -201,6 +206,7 @@ bool NetworkManager::connectoWiFi(const char *ssid, const char *password)
     } else {
       Serial.println("Error setting up MDNS responder!");
     }
+    isConnectWiFi = true;
     return true;
   }
   else {
@@ -208,6 +214,7 @@ bool NetworkManager::connectoWiFi(const char *ssid, const char *password)
     WiFi.disconnect();
     WiFi.mode(WIFI_OFF);
     MDNS.end();
+    isConnectWiFi = false;
     return false;
   }
 
@@ -217,6 +224,12 @@ bool NetworkManager::connectoWiFi(const char *ssid, const char *password)
 bool NetworkManager::connectoWiFi() {
 
   nm.readPrefs();
+  isConnectWiFi = false;
+  if (strlen(prefs_Obj.ssid) == 0 || strlen(prefs_Obj.password) == 0) {
+    Serial.println("Saved ssid or password is empty.");
+    return false;
+  }
+
   unsigned long preTime = 0;
   unsigned long interval = 1000;
   int seconds = 0;
@@ -238,6 +251,7 @@ bool NetworkManager::connectoWiFi() {
       }
       WiFi.disconnect();
       vTaskDelay(pdMS_TO_TICKS(100));
+      isConnectWiFi = false;
       return false;
     }
       
@@ -281,6 +295,7 @@ bool NetworkManager::connectoWiFi() {
     } else {
       Serial.println("Error setting up MDNS responder!");
     }
+    isConnectWiFi = true;
     return true;
   }
   else {
@@ -288,6 +303,7 @@ bool NetworkManager::connectoWiFi() {
     WiFi.disconnect();
     WiFi.mode(WIFI_OFF);
     MDNS.end();
+    isConnectWiFi = false;
     return false;
   }
 
@@ -313,8 +329,13 @@ void NetworkManager::startAPMode() {
 }
 
 void NetworkManager::startAdminMode() {
+      if (isNetwork_install) {
+        return;
+      }
+
+      startAPMode();
+
       if (!isServerConfigured) {
-        startAPMode();
 
         // #########################################################################################
         // #                                   WIFI STA SETTING                                    #
@@ -677,12 +698,13 @@ void NetworkManager::startAdminMode() {
       websocket.onEvent(onWsEvent);
       server.addHandler(&websocket);
 
+      isServerConfigured = true;
+    }
+
       server.begin();
       Serial.printf("Free heap after setup: %d bytes\n", ESP.getFreeHeap());
       Serial.printf("install Webserver Successfully.\n");
       isNetwork_install = true;
-      isServerConfigured = true;
-    }
 }
 
 void NetworkManager::stopAdminMode() {
@@ -690,6 +712,8 @@ void NetworkManager::stopAdminMode() {
   dnsServer.stop();
   WiFi.softAPdisconnect(true);
   WiFi.mode(WIFI_OFF);
+  isNetwork_install = false;
+  isConnectWiFi = false;
   Serial.println("Admin Mode Stopped. RAM Freed!");
 }
 
