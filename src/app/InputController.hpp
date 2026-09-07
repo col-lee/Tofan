@@ -1,3 +1,4 @@
+// Maps rotary encoder and button input to UI navigation and device actions.
 #pragma once
 
 class InputController {

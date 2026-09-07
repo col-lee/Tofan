@@ -1,16 +1,20 @@
+// Owns speaker playback, I2S capture, WAV recording and local voice inference.
 #pragma once
 #ifndef SOUNDMANAGER_H
 #define SOUNDMANAGER_H
 
 #include <Audio.h>
 #include <driver/i2s.h>
-#include "GlobalVar.hpp"
+#include "../core/SharedResources.hpp"
 
 #ifndef ENCODER_VALUE
 #define ENCODER_VALUE
     extern String currentSongTitle;
     extern bool isPlayingAudio;
-    extern int currentAudioProgress; 
+    extern bool isOnlineAudio;
+    extern bool hasPausedAudio;
+    extern const char* onlineStationNames[];
+    extern int currentAudioProgress;
     extern unsigned long lastProgressUpdate;
     extern bool autoPlayNext;
     extern uint32_t currentAudioTime;
@@ -29,7 +33,9 @@ int16_t readMicData();
 void handleAudio(void *parameter);
 bool enterRecordingMode();
 void exitRecordingMode();
-bool startRecording(const char* path);
+// No path: create a new numbered recording. Explicit paths are scratch files (AI Pet).
+bool startRecording(const char* path = nullptr);
+const String& getRecordingName();
 void recordLoop();
 void stopRecording();
 bool isMicrophoneReady();

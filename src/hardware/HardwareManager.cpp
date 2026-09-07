@@ -1,9 +1,10 @@
+// Collects device readiness and diagnostic status for the debug screen.
 #include "HardwareManager.hpp"
-#include "GlobalVar.hpp"
-#include "DisplayManager.hpp"
-#include "SoundManager.hpp"
-#include "Network.hpp"
-#include "FileManager.hpp"
+#include "../core/SharedResources.hpp"
+#include "../display/DisplayManager.hpp"
+#include "../audio/SoundManager.hpp"
+#include "../network/Network.hpp"
+#include "../storage/FileManager.hpp"
 #include "../core/GlobalState.hpp"
 #include <SD.h>
 #include <WiFi.h>

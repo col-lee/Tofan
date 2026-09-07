@@ -1,6 +1,8 @@
+// Manages Wi-Fi, Admin Mode HTTP routes and WebSocket commands.
 #include "Network.hpp"
-#include "AIConversation.hpp"
-#include "FileManager.hpp"
+#include "../hardware/DisplayDevice.hpp"
+#include "../ai/AIConversation.hpp"
+#include "../storage/FileManager.hpp"
 #include <stdlib.h>
 #include <string.h>
 
@@ -8,8 +10,10 @@ DNSServer dnsServer;
 AsyncWebServer server(80);
 AsyncWebSocket websocket("/ws");
 IPAddress apIP(192,168,4,1);
-Preferences prefs; // instance Preferences for Save ssid and password
+Preferences prefs; // NVS storage for Wi-Fi and Admin settings.
 NetworkManager nm;
+
+int timeout_wifi_connection = 10;
 
 bool isNetwork_install = false;
 unsigned long ota_progress_millis = 0;
@@ -101,7 +105,7 @@ bool NetworkManager::clearUsername() {
 }
 
 void NetworkManager::generateToken(char* token, int length) {
-  // ชุดตัวอักษรที่จะใช้สุ่ม (ตัดตัวที่สับสนง่ายออก เช่น l, 1, O, 0 ถ้าต้องการ)
+  // Token alphabet: uppercase, lowercase and decimal digits.
   const char charset[] = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
   int charsetSize = sizeof(charset) - 1;
 
@@ -152,7 +156,7 @@ bool NetworkManager::connectoWiFi(const char *ssid, const char *password)
   while (WiFi.status() != WL_CONNECTED)
   {
     unsigned long currentTime = millis();
-    if (seconds >= 5) {
+    if (seconds >= timeout_wifi_connection) {
       Serial.println("");
       Serial.println("WiFi connect Time out.");
       if (xSemaphoreTake(displaySemaphore, pdMS_TO_TICKS(50)) == pdTRUE)
@@ -165,7 +169,7 @@ bool NetworkManager::connectoWiFi(const char *ssid, const char *password)
       isConnectWiFi = false;
       return false;
     }
-      
+
     if ((currentTime - preTime) >= interval)
     {
       preTime = currentTime;
@@ -241,7 +245,7 @@ bool NetworkManager::connectoWiFi() {
   while (WiFi.status() != WL_CONNECTED)
   {
     unsigned long currentTime = millis();
-    if (seconds >= 5) {
+    if (seconds >= timeout_wifi_connection) {
       Serial.println("");
       Serial.println("WiFi connect Time out.");
       if (xSemaphoreTake(displaySemaphore, pdMS_TO_TICKS(50)) == pdTRUE)
@@ -254,7 +258,7 @@ bool NetworkManager::connectoWiFi() {
       isConnectWiFi = false;
       return false;
     }
-      
+
     if ((currentTime - preTime) >= interval)
     {
       preTime = currentTime;
@@ -318,11 +322,6 @@ void NetworkManager::startAPMode() {
   WiFi.softAPConfig(apIP, apIP, IPAddress(255, 255, 255, 0));
   WiFi.softAP("terngai555", "esp32-pass", 1, 0, 1);
 
-  // if (xSemaphoreTake(displaySemaphore, pdMS_TO_TICKS(100)) == pdTRUE) {
-  //   tft.print("IP: ");
-  //   tft.println(apIP);
-  //   xSemaphoreGive(displaySemaphore);
-  // }
 
   dnsServer.start(53, "manager.setup", apIP);
   vTaskDelay(pdMS_TO_TICKS(100));
@@ -354,7 +353,6 @@ void NetworkManager::startAdminMode() {
           }
         }
 
-       
 
       // #########################################################################################
       // #                            ROUTER FOR MANAGE WIFI PASSWORD                            #
@@ -417,9 +415,9 @@ void NetworkManager::startAdminMode() {
         }
         request->_tempObject = responseBody; });
 
-      // // ########################################################################################
-      // // # ROUTER FOR MANAGE LOGIN AND CHANGE USERNAME, PASSWORD ,CHECK TOKEN LOGIN, UPLOADFILE #
-      // // ########################################################################################
+      // ########################################################################################
+      // # ROUTER FOR MANAGE LOGIN AND CHANGE USERNAME, PASSWORD ,CHECK TOKEN LOGIN, UPLOADFILE #
+      // ########################################################################################
 
       server.on("/api/signin", HTTP_OPTIONS, [](AsyncWebServerRequest *request)
                 {
@@ -429,9 +427,9 @@ void NetworkManager::startAdminMode() {
       response->addHeader("Access-Control-Allow-Headers", "Content-Type");
       request->send(response); });
 
-      // // ---------------------------------------------------------
-      // // 2. API: /api/signin
-      // // ---------------------------------------------------------
+      // ---------------------------------------------------------
+      // 2. API: /api/signin
+      // ---------------------------------------------------------
       server.on("/api/signin", HTTP_POST, [](AsyncWebServerRequest *request)
                 {
         if (request->_tempObject != NULL) {
@@ -497,9 +495,9 @@ void NetworkManager::startAdminMode() {
       response->addHeader("Access-Control-Allow-Headers", "Content-Type");
       request->send(response); });
 
-      // // ---------------------------------------------------------
-      // // 3. API: /api/signup
-      // // ---------------------------------------------------------
+      // ---------------------------------------------------------
+      // 3. API: /api/changeuser
+      // ---------------------------------------------------------
       server.on("/api/changeuser", HTTP_POST, [](AsyncWebServerRequest *request)
                 {
         if (request->_tempObject != NULL) {
@@ -543,9 +541,9 @@ void NetworkManager::startAdminMode() {
       response->addHeader("Access-Control-Allow-Headers", "Content-Type");
       request->send(response); });
 
-      // // ---------------------------------------------------------
-      // // 4. API: /api/checkToken
-      // // ---------------------------------------------------------
+      // ---------------------------------------------------------
+      // 4. API: /api/checkToken
+      // ---------------------------------------------------------
       server.on("/api/checkToken", HTTP_POST, [](AsyncWebServerRequest *request)
                 {
         if (request->_tempObject != NULL) {
@@ -590,11 +588,11 @@ void NetworkManager::startAdminMode() {
           }
           uploadState.inProgress = false;
         }
-    
+
         request->send(200, "text/plain", "successfull.");
         Serial.printf("✓ Upload finished: %s (%d bytes)\n", uploadState.filename.c_str(), uploadState.totalBytes);
-        Serial.printf("Free heap: %d bytes\n", ESP.getFreeHeap()); 
-      
+        Serial.printf("Free heap: %d bytes\n", ESP.getFreeHeap());
+
       }, [](AsyncWebServerRequest *request, String filename, size_t index, uint8_t *data, size_t len, bool final) {
         if (!index) {
 
@@ -670,7 +668,7 @@ void NetworkManager::startAdminMode() {
             Serial.printf("  %d KB...\n", uploadState.totalBytes / 1024);
           }
 
-          // CRITICAL: Reset watchdog periodically
+          // Refresh upload activity time once per second.
           if (millis() - uploadState.lastUpdate > 1000) {
             uploadState.lastUpdate = millis();
           }
@@ -683,15 +681,14 @@ void NetworkManager::startAdminMode() {
           Serial.printf("✓ Upload complete: %.2f MB\n", (float)uploadState.totalBytes / (1024.0 * 1024.0));
           Serial.println("Upload complete");
           Serial.printf("Heap after upload: %d bytes\n", ESP.getFreeHeap());
-          // if (filename.equals("index.html")) controlRes = true;
         }
 
-      request->redirect("/WEB_Source/uploadFile.html"); 
+      request->redirect("/WEB_Source/uploadFile.html");
     });
 
       server.serveStatic("/", SD, "/");
 
-      server.onNotFound([](AsyncWebServerRequest *request) { 
+      server.onNotFound([](AsyncWebServerRequest *request) {
           request->send(200, "text/plain", "Not found");
       });
 
@@ -719,12 +716,12 @@ void NetworkManager::stopAdminMode() {
 
 void handleWebSocketMessage(AsyncWebSocketClient *client, void *arg, uint8_t *data, size_t len) {
     AwsFrameInfo *info = (AwsFrameInfo*)arg;
-    
+
     if (info->final && info->index == 0 && info->len == len && info->opcode == WS_TEXT) {
-        
-        // 🌟 วิธีแปลงข้อมูลที่ปลอดภัย ไม่เสี่ยง Buffer Overflow
+
+        // Deserialize exactly the received WebSocket payload length.
         String msg((char*)data, len);
-        
+
         JsonDocument doc;
         DeserializationError error = deserializeJson(doc, msg);
         if (error) {
@@ -739,10 +736,10 @@ void handleWebSocketMessage(AsyncWebSocketClient *client, void *arg, uint8_t *da
 
         if (action == "scan") {
             String jsonStr = file_card.getFileListJSON(path);
-            // 🌟 ส่งกลับไปเฉพาะ Client ที่ร้องขอมาเท่านั้น ไม่ใช้ textAll()
-            client->text(jsonStr); 
-            return; 
-        } 
+            // ส่งกลับไปเฉพาะ Client ที่ร้องขอมาเท่านั้น ไม่ใช้ textAll()
+            client->text(jsonStr);
+            return;
+        }
         else if (action == "create") {
             String type = doc["type"] | "file";
             res = (type == "folder") ? file_card.createFolder(path) : file_card.createFile(path);
@@ -750,7 +747,7 @@ void handleWebSocketMessage(AsyncWebSocketClient *client, void *arg, uint8_t *da
         else if (action == "delete") {
             res = file_card.deleteFile(path);
         }
-        else if (action == "rename" || action == "move") { 
+        else if (action == "rename" || action == "move") {
             String newPath = doc["newPath"] | "";
             res = file_card.renameFile(path, newPath);
         }
@@ -759,10 +756,10 @@ void handleWebSocketMessage(AsyncWebSocketClient *client, void *arg, uint8_t *da
             res = file_card.updateFile(path, content);
         }
 
-        // 🌟 ส่งกลับเฉพาะคนสั่ง
+        // ส่งกลับเฉพาะคนสั่ง
         responseMsg = "{\"action\":\"" + action + "\", \"path\":\"" + path + "\", \"status\":" + String(res ? "true" : "false") + "}";
         client->text(responseMsg);
-        
+
         Serial.println("WS Action: " + action + " | Status: " + String(res ? "Success" : "Failed"));
     }
 }
@@ -770,14 +767,14 @@ void handleWebSocketMessage(AsyncWebSocketClient *client, void *arg, uint8_t *da
 void onWsEvent(AsyncWebSocket *server, AsyncWebSocketClient *client, AwsEventType type, void *arg, uint8_t *data, size_t len) {
     if (type == WS_EVT_CONNECT) {
         Serial.printf("WS Client connected: %u\n", client->id());
-        
-        // 🌟 กฎเหล็ก: มี Admin ได้แค่คนเดียวเท่านั้น!
+
+        // กฎเหล็ก: มี Admin ได้แค่คนเดียวเท่านั้น!
         // ลูปหา Client ตัวอื่นๆ ที่ค้างอยู่ในระบบ แล้วเตะทิ้งเพื่อคืน RAM
         for (auto& c : server->getClients()) {
-            // ใช้ จุด (.) แทนลูกศร (->) เพราะมันเป็น Object ไม่ใช่ Pointer
-            if (c.id() != client->id()) { 
+            // Close other connected clients to keep a single Admin WebSocket.
+            if (c.id() != client->id()) {
                 Serial.printf("Kicking old zombie client: %u to save RAM!\n", c.id());
-                c.close(); 
+                c.close();
             }
         }
     } else if (type == WS_EVT_DISCONNECT) {

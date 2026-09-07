@@ -1,8 +1,9 @@
+// Mounts the SD card and implements directory and file operations.
+#include "../hardware/DisplayDevice.hpp"
 #include "FileManager.hpp"
 #include <ArduinoJson.h>
 
 SPIClass vspi(FSPI);
-SemaphoreHandle_t sdSemaphore;
 bool isConnectSDcard = false;
 bool isFileManager_install;
 FileManager file_card;
@@ -68,7 +69,7 @@ void FileManager::initSDCard()
 // ฟังก์ชันแสกนโฟลเดอร์และแปลงเป็น JSON
 // 1. ฟังก์ชันแสกนโฟลเดอร์
 String FileManager::getFileListJSON(String dirPath) {
-    // 🚨 ล็อกชั้นที่ 1: ถ้าไม่ใช่โฟลเดอร์ /main ให้ปฏิเสธการเข้าถึงทันที
+    // ล็อกชั้นที่ 1: ตรวจ prefix /main ของ path ก่อนเปิดรายการไฟล์
     if (!dirPath.startsWith("/main")) {
         return "{\"type\":\"file_list\",\"status\":\"error\",\"msg\":\"Access Denied\"}";
     }
@@ -98,10 +99,10 @@ String FileManager::getFileListJSON(String dirPath) {
         item["name"] = fileName;
         item["isDir"] = file.isDirectory();
         item["size"] = file.size();
-        
+
         file = dir.openNextFile();
     }
-    
+
     xSemaphoreGive(sdSemaphore);
 
     String output;
@@ -111,7 +112,7 @@ String FileManager::getFileListJSON(String dirPath) {
 
 // 2. ฟังก์ชันสร้างไฟล์
 bool FileManager::createFile(String path) {
-    if (!path.startsWith("/main")) return false; // 🚨 บล็อก
+    if (!path.startsWith("/main")) return false; // บล็อก
     if (xSemaphoreTake(sdSemaphore, pdMS_TO_TICKS(200)) == pdTRUE) {
         File f = SD.open(path, FILE_WRITE);
         if(f) { f.close(); xSemaphoreGive(sdSemaphore); return true; }
@@ -122,9 +123,9 @@ bool FileManager::createFile(String path) {
 
 // 3. ฟังก์ชันลบไฟล์
 bool FileManager::deleteFile(String path) {
-    // 🚨 บล็อก และ ห้ามลบโฟลเดอร์ /main ทิ้งเด็ดขาด!
-    if (!path.startsWith("/main") || path == "/main") return false; 
-    
+    // บล็อก และ ห้ามลบโฟลเดอร์ /main ทิ้งเด็ดขาด!
+    if (!path.startsWith("/main") || path == "/main") return false;
+
     if (xSemaphoreTake(sdSemaphore, pdMS_TO_TICKS(200)) == pdTRUE) {
         bool res;
         File f = SD.open(path);
@@ -143,9 +144,9 @@ bool FileManager::deleteFile(String path) {
 
 // 4. ฟังก์ชันเปลี่ยนชื่อ
 bool FileManager::renameFile(String oldPath, String newPath) {
-    // 🚨 บล็อกทั้งชื่อเก่าและชื่อใหม่
+    // บล็อกทั้งชื่อเก่าและชื่อใหม่
     if (!oldPath.startsWith("/main") || !newPath.startsWith("/main") || oldPath == "/main") return false;
-    
+
     if (xSemaphoreTake(sdSemaphore, pdMS_TO_TICKS(200)) == pdTRUE) {
         bool res = SD.rename(oldPath, newPath);
         xSemaphoreGive(sdSemaphore);
@@ -156,21 +157,21 @@ bool FileManager::renameFile(String oldPath, String newPath) {
 
 // 5. ฟังก์ชันอัปเดต/เขียนทับไฟล์ (สำหรับ WebSocket)
 bool FileManager::updateFile(String path, String content) {
-    if (!path.startsWith("/main")) return false; // 🚨 บล็อกห้ามยุ่งกับไฟล์ระบบ
-    
+    if (!path.startsWith("/main")) return false; // Require the /main prefix.
+
     if (xSemaphoreTake(sdSemaphore, pdMS_TO_TICKS(200)) == pdTRUE) {
-        // 🌟 ลบไฟล์เดิมทิ้งก่อน เพื่อให้ไฟล์เริ่มนับ 0 Byte ใหม่เสมอ
+        // ลบไฟล์เดิมทิ้งก่อน เพื่อให้ไฟล์เริ่มนับ 0 Byte ใหม่เสมอ
         if (SD.exists(path)) {
             SD.remove(path);
         }
-        
+
         // ใช้ FILE_WRITE เพื่อสร้างไฟล์และเขียนใหม่
-        File f = SD.open(path, FILE_WRITE); 
-        if(f) { 
+        File f = SD.open(path, FILE_WRITE);
+        if(f) {
             f.print(content);
-            f.close(); 
-            xSemaphoreGive(sdSemaphore); 
-            return true; 
+            f.close();
+            xSemaphoreGive(sdSemaphore);
+            return true;
         }
         xSemaphoreGive(sdSemaphore);
     }
@@ -179,10 +180,10 @@ bool FileManager::updateFile(String path, String content) {
 
 // ฟังก์ชันสร้างโฟลเดอร์
 bool FileManager::createFolder(String path) {
-    if (!path.startsWith("/main")) return false; 
-    
+    if (!path.startsWith("/main")) return false;
+
     if (xSemaphoreTake(sdSemaphore, pdMS_TO_TICKS(200)) == pdTRUE) {
-        bool res = SD.mkdir(path.c_str()); 
+        bool res = SD.mkdir(path.c_str());
         xSemaphoreGive(sdSemaphore);
         return res;
     }

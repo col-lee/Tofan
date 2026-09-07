@@ -1,6 +1,7 @@
+// Mounts the SD card and implements directory and file operations.
 #pragma once
 
-#include "GlobalVar.hpp"
+#include "../core/SharedResources.hpp"
 
 #include <SD.h>
 #include <FS.h>
@@ -10,7 +11,6 @@ extern bool isConnectSDcard;
 class FileManager
 {
 private:
-    /* data */
 public:
     FileManager();
     ~FileManager();
@@ -24,4 +24,3 @@ public:
 };
 
 extern FileManager file_card;
-

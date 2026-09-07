@@ -1,3 +1,4 @@
+// Configures input pins and reads buttons using the configured active level.
 #include "IOManager.hpp"
 
 IOManager ioManager;
@@ -73,4 +74,3 @@ void IOManager::indicateConnecting() {
         delay(200);
     }
 }
-

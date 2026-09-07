@@ -1,3 +1,4 @@
+// Recording and AI Pet state shared by the application, audio and display modules.
 #pragma once
 
 #include <Arduino.h>

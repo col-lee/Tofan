@@ -1,3 +1,4 @@
+// Updates the NeoPixel color animation without blocking the application loop.
 #include "RGBLed.hpp"
 
 RGBLed rgbLed;

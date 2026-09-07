@@ -1,3 +1,4 @@
+// Board pins and firmware constants; runtime settings are stored by their owning modules.
 #ifndef CONFIG_HPP
 #define CONFIG_HPP
 
@@ -50,9 +51,9 @@
 #define RGB_LED_BRIGHTNESS  32
 #define RGB_LED_INTERVAL_MS 20
 
-#define TASK_STACK_AUDIO      (4 * 1024)
+#define TASK_STACK_AUDIO      (6 * 1024)
 #define TASK_STACK_NETWORK    (4 * 1024)
-#define TASK_STACK_DISPLAY    (3 * 1024)
+#define TASK_STACK_DISPLAY    (4 * 1024)
 
 #define MAX_PLAYLIST_SIZE     200
 #define MAX_IMAGE_SIZE        100

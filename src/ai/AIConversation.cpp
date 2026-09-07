@@ -1,3 +1,4 @@
+// Persists AI configuration in NVS and posts WAV files to the configured HTTP backend.
 #include "AIConversation.hpp"
 
 #include <ArduinoJson.h>

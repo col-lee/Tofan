@@ -1,3 +1,4 @@
+// Collects device readiness and diagnostic status for the debug screen.
 #pragma once
 
 #include <Arduino.h>

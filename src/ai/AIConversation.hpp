@@ -1,3 +1,4 @@
+// Persists AI configuration in NVS and posts WAV files to the configured HTTP backend.
 #ifndef AI_CONVERSATION_HPP
 #define AI_CONVERSATION_HPP
 

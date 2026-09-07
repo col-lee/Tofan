@@ -1,27 +1,25 @@
-#include "GlobalVar.hpp"
+// Manages Wi-Fi, Admin Mode HTTP routes and WebSocket commands.
+#pragma once
 
-#define DISPLAYMANAGER_HH
+#include "../core/SharedResources.hpp"
 
-#ifndef NETWORK_LIBRARY
-#define NETWORK_LIBRARY
-    #include <WiFi.h>
-    #include <AsyncTCP.h>
-    #include <ESPAsyncWebServer.h>
-    #include <Preferences.h>
-    #include <DNSServer.h>
-    #include <ESPmDNS.h>
-    #include <stdlib.h>
+#include <WiFi.h>
+#include <AsyncTCP.h>
+#include <ESPAsyncWebServer.h>
+#include <Preferences.h>
+#include <DNSServer.h>
+#include <ESPmDNS.h>
+#include <stdlib.h>
+#include <Update.h>
 
 typedef struct {
     char ssid[32] = "";
     char password[32] = "";
-} PrefsObj_WiFiManager; // object for get ssid and password
-
-#endif
+} PrefsObj_WiFiManager; // Stored Wi-Fi credential buffers.
 
 extern AsyncWebServer server;
 extern AsyncWebSocket websocket;
-extern Preferences prefs; // instance Preferences for Save ssid and password
+extern Preferences prefs; // NVS storage for Wi-Fi and Admin settings.
 
 class NetworkManager {
 public:
@@ -49,5 +47,3 @@ void handleWebSocketMessage(AsyncWebSocketClient *client, void *arg, uint8_t *da
 void onWsEvent(AsyncWebSocket *server, AsyncWebSocketClient *client, AwsEventType type, void *arg, uint8_t *data, size_t len);
 
 extern NetworkManager nm;
-
-

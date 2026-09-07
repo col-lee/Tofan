@@ -1,14 +1,16 @@
+// Maps rotary encoder and button input to UI navigation and device actions.
 #include "InputController.hpp"
 #include "AppCoordinator.hpp"
-#include "../extensions/GlobalVar.hpp"
-#include "../extensions/DisplayManager.hpp"
-#include "../extensions/Network.hpp"
-#include "../extensions/SoundManager.hpp"
-#include "../extensions/IOManager.hpp"
-#include "../extensions/HardwareManager.hpp"
-#include "../extensions/AIConversation.hpp"
+#include "../core/SharedResources.hpp"
+#include "../display/DisplayManager.hpp"
+#include "../network/Network.hpp"
+#include "../audio/SoundManager.hpp"
+#include "../hardware/IOManager.hpp"
+#include "../hardware/HardwareManager.hpp"
+#include "../ai/AIConversation.hpp"
 #include "../core/GlobalState.hpp"
 #include <AiEsp32RotaryEncoder.h>
+#include "../core/MediaNavigation.hpp"
 
 InputController inputController;
 
@@ -38,6 +40,14 @@ void InputController::begin() {
 }
 
 void InputController::update() {
+    if (DISM.currentState == UI_STATE::APP_DISPLAY_CLOSING) {
+        if (!DISM.mediaClearComplete.load()) return;
+        DISM.createUISprite();
+        rotaryEncoder.setBoundaries(0, media::lastIndex(DISM.imageNames.size()), true);
+        rotaryEncoder.setEncoderValue(DISM.imageSelectedIndex);
+        DISM.currentState = UI_STATE::APP_DISPLAY_LIST;
+        DISM.drawImageList();
+    }
     if (DISM.currentState == UI_STATE::HOME_MENU && DISM.isAnimatingMenu) {
         DISM.drawHomeMenu();
         vTaskDelay(1);
@@ -51,15 +61,15 @@ void InputController::update() {
                 rotaryEncoder.setEncoderValue(DISM.animatedMenuIndex_target);
                 DISM.drawHomeMenu();
             } else if (DISM.currentState == UI_STATE::APP_MUSIC) {
-                rotaryEncoder.setBoundaries(0, 3, true);
+                rotaryEncoder.setBoundaries(0, 4, true);
                 rotaryEncoder.setEncoderValue(DISM.currentMusicControlIndex);
                 DISM.drawMusicPlayer(currentSongTitle, currentAudioProgress, isPlayingAudio);
             } else if (DISM.currentState == UI_STATE::APP_MUSIC_LIST) {
-                rotaryEncoder.setBoundaries(0, DISM.playlistNames.size(), true);
+                rotaryEncoder.setBoundaries(0, media::lastIndex(DISM.playlistNames.size()), true);
                 rotaryEncoder.setEncoderValue(DISM.playlistSelectedIndex);
                 DISM.drawMusicList();
             } else if (DISM.currentState == UI_STATE::APP_DISPLAY_LIST) {
-                rotaryEncoder.setBoundaries(0, DISM.imageNames.size(), true);
+                rotaryEncoder.setBoundaries(0, media::lastIndex(DISM.imageNames.size()), true);
                 rotaryEncoder.setEncoderValue(DISM.imageSelectedIndex);
                 DISM.drawImageList();
             } else if (DISM.currentState == UI_STATE::APP_SETTINGS) {
@@ -67,20 +77,20 @@ void InputController::update() {
                 rotaryEncoder.setEncoderValue(DISM.settingSelectedIndex);
                 DISM.drawSettings();
             } else if (DISM.currentState == UI_STATE::APP_ONLINE_MUSIC) {
-                rotaryEncoder.setBoundaries(0, 2, false);
+                rotaryEncoder.setBoundaries(0, 3, true);
                 rotaryEncoder.setEncoderValue(DISM.currentMusicControlIndex);
                 DISM.drawOnlineMusicPlayer();
             }
         }
     }
 
-    if (DISM.currentState == UI_STATE::APP_MUSIC && isPlayingAudio && (millis() - DISM.VolLevelHidden > 1000)) {
-        DISM.drawMusicPlayer(currentSongTitle, currentAudioProgress, isPlayingAudio);
-    }
-
-    if (DISM.currentState == UI_STATE::APP_ONLINE_MUSIC) {
-        DISM.drawOnlineMusicPlayer();
-        vTaskDelay(50);
+    static unsigned long lastPlayerRefresh = 0;
+    if (millis() - lastPlayerRefresh >= 200) {
+        lastPlayerRefresh = millis();
+        if (DISM.currentState == UI_STATE::APP_MUSIC)
+            DISM.drawMusicPlayer(currentSongTitle, currentAudioProgress, isPlayingAudio);
+        else if (DISM.currentState == UI_STATE::APP_ONLINE_MUSIC)
+            DISM.drawOnlineMusicPlayer();
     }
 
     if (DISM.currentState == UI_STATE::DEBUG) {
@@ -102,6 +112,7 @@ void InputController::update() {
 }
 
 void InputController::handleInput() {
+    if (DISM.currentState == UI_STATE::APP_DISPLAY_CLOSING) return;
     if (rotaryEncoder.encoderChanged()) {
         if (DISM.currentState == UI_STATE::HOME_MENU) {
             int rawValue = rotaryEncoder.readEncoder();
@@ -148,33 +159,20 @@ void InputController::handleInput() {
             DISPLAY_COMMAND cmd;
             switch (DISM.currentMenuIndex) {
                 case 0:
-                    rotaryEncoder.setBoundaries(0, (int)DISM.imageNames.size() - 1, true);
-                    rotaryEncoder.setEncoderValue(DISM.imageSelectedIndex);
                     DISM.loadImageList();
+                    rotaryEncoder.setBoundaries(0, media::lastIndex(DISM.imageNames.size()), true);
+                    rotaryEncoder.setEncoderValue(DISM.imageSelectedIndex);
                     DISM.currentState = UI_STATE::APP_DISPLAY_LIST;
                     DISM.drawImageList();
                     break;
                 case 1:
                     DISM.loadMusicList();
-                    if (DISM.playlistNames.empty() && WiFi.status() != WL_CONNECTED) {
-                        rotaryEncoder.setBoundaries(0, 1, false);
-                        rotaryEncoder.setEncoderValue(0);
-                        DISM.currentState = UI_STATE::POPUP_NO_MUSIC;
-                        DISM.drawPopupNoMusic();
-                        break;
-                    } else if (DISM.playlistNames.empty() && WiFi.status() == WL_CONNECTED) {
-                        rotaryEncoder.setBoundaries(0, 2, false);
-                        rotaryEncoder.setEncoderValue(0);
-                        DISM.currentState = UI_STATE::APP_ONLINE_MUSIC;
-                        DISM.drawOnlineMusicPlayer();
-                        break;
-                    } else {
-                        rotaryEncoder.setBoundaries(0, 3, true);
-                        rotaryEncoder.setEncoderValue(DISM.currentMusicControlIndex);
-                        DISM.currentState = UI_STATE::APP_MUSIC;
-                        DISM.drawMusicPlayer(currentSongTitle, currentAudioProgress, isPlayingAudio);
-                        break;
-                    }
+                    rotaryEncoder.setBoundaries(0, 4, true);
+                    DISM.currentMusicControlIndex = 1;
+                    rotaryEncoder.setEncoderValue(1);
+                    DISM.currentState = UI_STATE::APP_MUSIC;
+                    DISM.drawMusicPlayer(currentSongTitle, currentAudioProgress, isPlayingAudio);
+                    break;
                 case 2:
                     rotaryEncoder.setBoundaries(0, 1, true);
                     rotaryEncoder.setEncoderValue(DISM.settingSelectedIndex);
@@ -206,7 +204,7 @@ void InputController::handleInput() {
                     break;
             }
         } else if (DISM.currentState == UI_STATE::APP_DISPLAY_LIST) {
-            if (!DISM.imageNames.empty()) {
+            if (media::validIndex(DISM.imageSelectedIndex, DISM.imagePaths.size())) {
                 String selectedPath = DISM.imagePaths[DISM.imageSelectedIndex];
                 DISM.deleteUISprite();
                 DISM.currentState = UI_STATE::APP_DISPLAY;
@@ -222,17 +220,24 @@ void InputController::handleInput() {
 
             if (DISM.currentMusicControlIndex == 0) {
                 if (!DISM.playlistNames.empty()) {
-                    DISM.currentPlayingIndex--;
-                    if (DISM.currentPlayingIndex < 0) DISM.currentPlayingIndex = DISM.playlistNames.size() - 1;
+                    DISM.currentPlayingIndex = media::wrapIndex(DISM.currentPlayingIndex < 0 ? -1 : DISM.currentPlayingIndex - 1, DISM.playlistPaths.size());
                     cmd.audio_state = AUDIO_COMMAND::AUDIO_STATE::PLAY;
                     cmd.path = DISM.playlistPaths[DISM.currentPlayingIndex];
                     xQueueSend(audio_command, &cmd, portMAX_DELAY);
                 }
             } else if (DISM.currentMusicControlIndex == 1) {
-                if (isPlayingAudio) cmd.audio_state = AUDIO_COMMAND::AUDIO_STATE::PUASE;
-                else { cmd.audio_state = AUDIO_COMMAND::AUDIO_STATE::PLAY; cmd.path = ""; }
+                if (isPlayingAudio && !isOnlineAudio) cmd.audio_state = AUDIO_COMMAND::AUDIO_STATE::PUASE;
+                else {
+                    if (DISM.playlistPaths.empty()) return;
+                    cmd.audio_state = AUDIO_COMMAND::AUDIO_STATE::PLAY;
+                    if (!isOnlineAudio && hasPausedAudio) cmd.path = "";
+                    else {
+                        DISM.currentPlayingIndex = media::wrapIndex(DISM.currentPlayingIndex < 0 ? 0 : DISM.currentPlayingIndex, DISM.playlistPaths.size());
+                        cmd.path = DISM.playlistPaths[DISM.currentPlayingIndex];
+                    }
+                }
                 xQueueSend(audio_command, &cmd, portMAX_DELAY);
-                DISM.drawMusicPlayer(currentSongTitle, currentAudioProgress, !isPlayingAudio);
+                DISM.drawMusicPlayer(currentSongTitle, currentAudioProgress, isPlayingAudio);
             } else if (DISM.currentMusicControlIndex == 2) {
                 if (!DISM.playlistNames.empty()) {
                     DISM.currentPlayingIndex++;
@@ -241,9 +246,15 @@ void InputController::handleInput() {
                     cmd.path = DISM.playlistPaths[DISM.currentPlayingIndex];
                     xQueueSend(audio_command, &cmd, portMAX_DELAY);
                 }
+            } else if (DISM.currentMusicControlIndex == 4) {
+                DISM.currentMusicControlIndex = 1;
+                rotaryEncoder.setBoundaries(0, 3, true);
+                rotaryEncoder.setEncoderValue(1);
+                DISM.currentState = UI_STATE::APP_ONLINE_MUSIC;
+                DISM.drawOnlineMusicPlayer();
             } else if (DISM.currentMusicControlIndex == 3) {
                 DISM.loadMusicList();
-                rotaryEncoder.setBoundaries(0, (int)DISM.playlistNames.size(), true);
+                rotaryEncoder.setBoundaries(0, media::lastIndex(DISM.playlistNames.size()), true);
                 rotaryEncoder.setEncoderValue(DISM.playlistSelectedIndex);
                 DISM.currentState = UI_STATE::APP_MUSIC_LIST;
                 DISM.drawMusicList();
@@ -253,7 +264,7 @@ void InputController::handleInput() {
                 if (nm.connectoWiFi()) {
                     DISM.isWiFiOn = true;
                     DISM.currentMusicControlIndex = 1;
-                    rotaryEncoder.setBoundaries(0, 2, false);
+                    rotaryEncoder.setBoundaries(0, 3, true);
                     rotaryEncoder.setEncoderValue(1);
                     DISM.currentState = UI_STATE::APP_ONLINE_MUSIC;
                     AUDIO_COMMAND cmd;
@@ -279,29 +290,43 @@ void InputController::handleInput() {
                 DISM.drawHomeMenu();
             }
         } else if (DISM.currentState == UI_STATE::APP_ONLINE_MUSIC) {
+            if (DISM.currentMusicControlIndex == 3) {
+                DISM.currentMusicControlIndex = 1;
+                rotaryEncoder.setBoundaries(0, 4, true);
+                rotaryEncoder.setEncoderValue(1);
+                DISM.currentState = UI_STATE::APP_MUSIC;
+                DISM.drawMusicPlayer(currentSongTitle, currentAudioProgress, isPlayingAudio);
+                return;
+            }
+            if (WiFi.status() != WL_CONNECTED) {
+                DISM.popupSelectedIndex = 0;
+                rotaryEncoder.setBoundaries(0, 1, false);
+                rotaryEncoder.setEncoderValue(0);
+                DISM.currentState = UI_STATE::POPUP_NO_MUSIC;
+                DISM.drawPopupNoMusic();
+                return;
+            }
             AUDIO_COMMAND cmd;
             cmd.module = AUDIO_COMMAND::MODULE::AUDIO;
 
             if (DISM.currentMusicControlIndex == 0) {
-                currentStationIndex--;
-                if (currentStationIndex < 0) currentStationIndex = MAX_STATIONS - 1;
+                currentStationIndex = media::wrapIndex(currentStationIndex - 1, MAX_STATIONS);
                 cmd.audio_state = AUDIO_COMMAND::AUDIO_STATE::PLAY;
                 cmd.path = onlineStations[currentStationIndex];
                 xQueueSend(audio_command, &cmd, portMAX_DELAY);
             } else if (DISM.currentMusicControlIndex == 1) {
-                if (isPlayingAudio) cmd.audio_state = AUDIO_COMMAND::AUDIO_STATE::PUASE;
-                else { cmd.audio_state = AUDIO_COMMAND::AUDIO_STATE::PLAY; cmd.path = ""; }
+                if (isPlayingAudio && isOnlineAudio) cmd.audio_state = AUDIO_COMMAND::AUDIO_STATE::PUASE;
+                else { cmd.audio_state = AUDIO_COMMAND::AUDIO_STATE::PLAY; cmd.path = onlineStations[currentStationIndex]; }
                 xQueueSend(audio_command, &cmd, portMAX_DELAY);
                 DISM.drawOnlineMusicPlayer();
             } else if (DISM.currentMusicControlIndex == 2) {
-                currentStationIndex++;
-                if (currentStationIndex >= MAX_STATIONS) currentStationIndex = 0;
+                currentStationIndex = media::wrapIndex(currentStationIndex + 1, MAX_STATIONS);
                 cmd.audio_state = AUDIO_COMMAND::AUDIO_STATE::PLAY;
                 cmd.path = onlineStations[currentStationIndex];
                 xQueueSend(audio_command, &cmd, portMAX_DELAY);
             }
         } else if (DISM.currentState == UI_STATE::APP_MUSIC_LIST) {
-            if (!DISM.playlistNames.empty()) {
+            if (media::validIndex(DISM.playlistSelectedIndex, DISM.playlistPaths.size())) {
                 DISM.currentPlayingIndex = DISM.playlistSelectedIndex;
                 String selectedPath = DISM.playlistPaths[DISM.playlistSelectedIndex];
                 currentSongTitle = DISM.playlistNames[DISM.playlistSelectedIndex];
@@ -310,7 +335,7 @@ void InputController::handleInput() {
                 cmd.audio_state = AUDIO_COMMAND::AUDIO_STATE::PLAY;
                 cmd.path = selectedPath;
                 xQueueSend(audio_command, &cmd, portMAX_DELAY);
-                rotaryEncoder.setBoundaries(0, 3, true);
+                rotaryEncoder.setBoundaries(0, 4, true);
                 rotaryEncoder.setEncoderValue(DISM.currentMusicControlIndex);
                 DISM.currentState = UI_STATE::APP_MUSIC;
                 DISM.drawMusicPlayer(currentSongTitle, 0, true);
@@ -335,7 +360,7 @@ void InputController::handleInput() {
             } else {
                 DISM.seconds = 0;
                 DISM.previousMillis = millis();
-                if (!startRecording("/main/Musics/voice_record.wav")) {
+                if (!startRecording()) {
                     Serial.println("Unable to start recording");
                 }
             }
@@ -346,7 +371,7 @@ void InputController::handleInput() {
     if (ioManager.isButtonPressed(BTN_BACK)) {
         if (backBtnPressTime == 0) backBtnPressTime = millis();
 
-        if (millis() - backBtnPressTime > 1000 && !isBackBtnLongPressed) {
+        if (millis() - backBtnPressTime > 1000 && !isBackBtnLongPressed && DISM.currentState != UI_STATE::APP_DISPLAY) {
             isBackBtnLongPressed = true;
             DISM.previousState = DISM.currentState;
             DISM.currentState = UI_STATE::GLOBAL_VOLUME;
@@ -362,15 +387,11 @@ void InputController::handleInput() {
                     DISPLAY_COMMAND cmd;
                     cmd.module = DISPLAY_COMMAND::MODULE::DIS;
                     cmd.display_state = DISPLAY_COMMAND::DISPLAY_STATE::CLEAR;
+                    DISM.mediaClearComplete.store(false);
                     xQueueSend(display_command, &cmd, portMAX_DELAY);
-                    vTaskDelay(pdMS_TO_TICKS(50));
-                    rotaryEncoder.setBoundaries(0, (int)DISM.imageNames.size(), true);
-                    rotaryEncoder.setEncoderValue(DISM.imageSelectedIndex);
-                    DISM.createUISprite();
-                    DISM.currentState = UI_STATE::APP_DISPLAY_LIST;
-                    DISM.drawImageList();
+                    DISM.currentState = UI_STATE::APP_DISPLAY_CLOSING;
                 } else if (DISM.currentState == UI_STATE::APP_MUSIC_LIST) {
-                    rotaryEncoder.setBoundaries(0, 3, true);
+                    rotaryEncoder.setBoundaries(0, 4, true);
                     rotaryEncoder.setEncoderValue(DISM.currentMusicControlIndex);
                     DISM.currentState = UI_STATE::APP_MUSIC;
                     DISM.drawMusicPlayer(currentSongTitle, currentAudioProgress, isPlayingAudio);
@@ -390,7 +411,7 @@ void InputController::handleInput() {
                     DISM.currentState = UI_STATE::HOME_MENU;
                     DISM.drawHomeMenu();
                 } else if (DISM.currentState == UI_STATE::POPUP_NO_MUSIC) {
-                    rotaryEncoder.setBoundaries(0, 3, true);
+                    rotaryEncoder.setBoundaries(0, 4, true);
                     rotaryEncoder.setEncoderValue(DISM.currentMusicControlIndex);
                     DISM.currentState = UI_STATE::APP_MUSIC;
                     DISM.drawMusicPlayer(currentSongTitle, currentAudioProgress, isPlayingAudio);

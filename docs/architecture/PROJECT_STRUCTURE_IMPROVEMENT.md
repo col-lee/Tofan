@@ -1,206 +1,49 @@
-# Project Structure Improvement Plan
+# โครงสร้างโปรแกรม
 
-## Current issues
+เอกสารนี้อธิบายซอร์สปัจจุบันหลังแยกไฟล์ตามหน้าที่
 
-จากโครงสร้างปัจจุบันมีปัญหา 5 ประเด็นหลัก:
+| ตำแหน่ง | หน้าที่ |
+| --- | --- |
+| `src/main.cpp` | ส่งต่อ Arduino lifecycle ไปยัง `app::begin()` และ `app::update()` |
+| `src/app/Application.cpp` | สร้าง mutex/queue, เริ่มอุปกรณ์และ task, แสดง boot UI |
+| `src/app/AppCoordinator.cpp` | เริ่ม RGB/AI, อัปเดต AI Pet และส่งเสียงให้ backend ใน task |
+| `src/app/InputController.cpp` | encoder ISR, ปุ่ม, เปลี่ยนหน้าและส่งคำสั่งควบคุม |
+| `src/core/Config.hpp` | พินและค่าคงที่; บางค่ามีไว้แต่ยังไม่ได้ใช้ทุกจุด |
+| `src/core/Commands.hpp` | `DISPLAY_COMMAND` และ `AUDIO_COMMAND` |
+| `src/core/GlobalState.*` | `app::runtime` สำหรับ recording/AI Pet |
+| `src/core/SharedResources.*` | ประกาศ readiness flags และกำหนด RTOS handles |
+| `src/hardware/DisplayDevice.hpp` | คลาส `LGFX` ตั้งค่า ST7789/SPI และประกาศ `tft`, `spr` |
+| `src/hardware/HardwareManager.*` | ตรวจสถานะอุปกรณ์สำหรับหน้า Debug |
+| `src/hardware/IOManager.*`, `RGBLed.*` | GPIO และ NeoPixel |
+| `src/display/DisplayManager.*` | สถานะ UI, sprite, รายการสื่อและหน้าจอ |
+| `src/display/MediaPlayback.cpp` | JPEG/GIF decoder callbacks และ `handleDisplay` |
+| `src/audio/SoundManager.*` | speaker, I2S capture, recorder และ inference |
+| `src/ai/AIConversation.*` | NVS, AI HTTP routes และส่ง WAV |
+| `src/network/Network.*` | Wi-Fi, Admin Mode, upload และ WebSocket |
+| `src/storage/FileManager.*` | mount SD และ file operations |
 
-1. ชื่อโฟลเดอร์ `extendstion` เป็น typo ของ `extension` / `extensions`
-2. ไฟล์ `src/main.cpp` ทำหน้าที่รวมการควบคุมทุกอย่างมากเกินไป เช่น UI, networking, audio, hardware, AI, queue, event loop
-3. `src/extendstion/GlobalVar.hpp` มีการ include หลายโมดูลและเก็บ state แบบ global มากเกินไป ทำให้เกิด coupling ระหว่างโมดูล และ circular dependency ได้ง่าย
-4. มีการใช้ global singleton แบบ `nm`, `file_card`, `hwManager`, `aiConversation` ในหลายไฟล์ ทำให้ความสัมพันธ์ซับซ้อนและยากทดสอบ
-5. Include guards และ header structure ยังไม่สม่ำเสมอ เช่น `DisplayManager.hpp` และ `Network.hpp` มีการ define guard แบบผิดรูปแบบ ทำให้โครงสร้างยากต่อการรักษา
+## ลำดับการทำงาน
 
----
+`setup()` → `app::begin()` → เริ่ม Serial, mutex, queues, จอ, GPIO, SD, เสียง, ไมโครโฟนและข้อมูลอุปกรณ์ → เริ่ม task เสียง/เครือข่าย/แสดงภาพ → boot UI → coordinator และ input controller
 
-## Recommended target structure
+`loop()` → `app::update()` → coordinator → input controller โดยเริ่มต้นที่หน้า AI Pet การฟังอัตโนมัติต้องเปิดใช้ AI และตั้ง pipeline URL แล้ว
 
-```text
-src/
-  app/
-    main.cpp
-    AppCoordinator.hpp
-    AppCoordinator.cpp
+| Task | Core | Priority | Stack bytes |
+| --- | --- | --- | --- |
+| `handleAudio` | 0 | 4 | 4096 |
+| `runNet` | 0 | 3 | 4096 |
+| `handleDisplay` | 1 | 2 | 3072 |
+| `CaptureSamples` | ไม่ pin | 10 | 4096 |
+| `AIPetVoice` | 0 | 3 | 8192 |
 
-  core/
-    config.hpp
-    enums.hpp
-    global_defines.hpp
-    GlobalState.hpp
-    logger.hpp
+`CaptureSamples` เริ่มระหว่าง initMicrophone; `AIPetVoice` สร้างเมื่อจบรอบบันทึกและลบตัวเองเมื่อเสร็จ
 
-  platform/
-    hardware/
-      HardwareManager.hpp
-      HardwareManager.cpp
-      IOManager.hpp
-      IOManager.cpp
-      RGBLed.hpp
-      RGBLed.cpp
-    storage/
-      FileManager.hpp
-      FileManager.cpp
-    network/
-      Network.hpp
-      Network.cpp
-      AIConversation.hpp
-      AIConversation.cpp
+## แนวทางเพิ่มโค้ด
 
-  services/
-    audio/
-      SoundManager.hpp
-      SoundManager.cpp
-    ui/
-      DisplayManager.hpp
-      DisplayManager.cpp
-      event.hpp
+- วาง `.hpp` คู่กับ `.cpp` ในโมดูลเจ้าของหน้าที่ ใช้ include แบบ relative ตามไฟล์จริง
+- ให้ `main.cpp` เป็น entry point และให้ `Application.cpp` ดูแลลำดับเริ่มระบบ
+- เพิ่ม UI/input ที่ display/app, เพิ่ม network route ที่ network หรือ AI ตามหน้าที่
+- อธิบายข้อจำกัด, หน่วย, ownership และเงื่อนไขของโค้ดในคอมเมนต์ หลีกเลี่ยงบันทึกว่าเคยแก้อะไรในอดีต
+- อัปเดตเอกสารและ build ทุกครั้งที่ย้ายไฟล์หรือเปลี่ยน public header
 
-  utils/
-    StringUtils.hpp
-    TimeUtils.hpp
-    ErrorCodes.hpp
-```
-
----
-
-## Design rules to follow
-
-### 1. `main.cpp` should be thin
-`main.cpp` ควรทำหน้าที่แค่:
-- initialize modules
-- create task / scheduler
-- start services
-- loop event dispatcher
-
-ไม่ควรมี logic การจัดการ UI, audio, network, AI เรียงรวมกันในไฟล์เดียวแบบปัจจุบัน
-
-### 2. Use one source of truth for shared state
-ควรย้าย global variables ไปไว้ใน `GlobalState.hpp` หรือ `AppState.hpp` แบบนี้:
-
-```cpp
-struct AppState {
-    bool isRecordingMode;
-    bool isRecording;
-    bool aiPetListening;
-    volatile bool aiPetProcessing;
-};
-
-extern AppState appState;
-```
-
-- หลีกเลี่ยงการ `#include` ทุกไฟล์ใน `GlobalVar.hpp`
-- `GlobalVar.hpp` ควรแค่ประกาศ type / constant / extern object
-- ห้ามให้ header เรียก dependency หลายชั้นเข้าด้วยกัน
-
-### 3. Split responsibilities by domain
-- `HardwareManager`: manage device status and health
-- `IOManager`: GPIO, button, LED
-- `SoundManager`: recorder / player / volume controls
-- `DisplayManager`: rendering UI and screen states
-- `NetworkManager`: wifi + web server + admin mode
-- `AIConversation`: API request / config / audio upload
-- `FileManager`: file operations on SD card
-
-### 4. Reduce circular include
-ปัจจุบันหลายไฟล์ include กันแบบไขว้:
-- `DisplayManager.cpp` includes `FileManager.hpp` and `SoundManager.hpp`
-- `HardwareManager.cpp` includes `DisplayManager.hpp` and `Network.hpp`
-- `Network.cpp` includes `AIConversation.hpp` and `FileManager.hpp`
-
-แนวทางที่ควรทำคือ:
-- ใช้ forward declaration เมื่อจำเป็น
-- headers ควร include เฉพาะสิ่งที่ต้องใช้จริง
-- ย้าย shared enums/structs ไปไว้ใน `core/enums.hpp` หรือ `core/global_defines.hpp`
-
----
-
-## Suggested migration plan
-
-### Step 1: Rename folder
-Rename:
-
-```text
-src/extendstion -> src/extensions
-```
-
-แม้จะไม่ใช่การ refactor หลัก แต่ช่วยลดความสับสนและแก้ typo โดยตรง
-
-### Step 2: Extract app orchestration
-สร้างไฟล์ใหม่:
-
-```text
-src/app/AppCoordinator.hpp
-src/app/AppCoordinator.cpp
-```
-
-หน้าที่:
-- initialize all modules
-- manage screen flow
-- handle input actions
-- orchestrate background tasks
-
-### Step 3: Move shared definitions out of `GlobalVar.hpp`
-ให้ `GlobalVar.hpp` เหลือแต่:
-- extern object declarations
-- enum definitions
-- shared constants
-- common pin definitions
-
-### Step 4: Split large UI logic
-ถ้าต้องการให้โปรเจ็กต์ดูดีจริง ๆ ควรแยก `DisplayManager.cpp` ออกเป็น:
-- `HomeScreen.cpp`
-- `MusicScreen.cpp`
-- `SettingsScreen.cpp`
-- `PetScreen.cpp`
-- `DebugScreen.cpp`
-
-แต่ถ้าอยากเริ่มแบบไม่ยุ่งมาก ให้เริ่มจากการแยก function group ภายใน file ก่อน
-
-### Step 5: Standardize naming
-อนุรักษ์แนวทางต่อไป:
-- class names: PascalCase
-- methods: camelCase
-- files: PascalCase or snake_case ที่สอดคล้องกัน
-- avoid abbreviations unless common and consistent
-
----
-
-## Recommended immediate cleanup without risky rewrite
-
-ถ้าจะปรับแบบไม่กระทบ build มากเกินไป ให้ทำรายการต่อไปนี้ก่อน:
-
-1. Rename `extendstion` to `extensions`
-2. Move shared constants out of `main.cpp`
-3. Create `AppCoordinator` and let `main.cpp` only bootstrap
-4. Remove all broad `#include` from `GlobalVar.hpp`
-5. Fix inconsistent include guards in `Network.hpp`
-6. Keep singletons but centralize them in `GlobalState.hpp`
-
----
-
-## Bottom line
-
-โครงสร้างปัจจุบันยังใช้งานได้ แต่ยัง “ทำงานได้” มากกว่าดีตามหลัก architecture เพราะมันมีปัญหาเรื่อง
-- coupling สูง
-- responsibility overlap
-- global state มาก
-- naming/typo
-- single-file orchestration
-
-ถ้าจะปรับให้ดีจริง ๆ ควรเริ่มจาก 3 เรื่องนี้ก่อน:
-1. แยก `main.cpp` ออกเป็น app coordinator
-2. แก้ `extendstion` typo และโครงสร้างโฟลเดอร์
-3. ลด dependency จาก `GlobalVar.hpp`
-
----
-
-## Suggested next action
-
-ผมแนะนำให้เริ่มด้วยการ refactor แบบ incremental:
-
-```text
-main.cpp -> AppCoordinator
-GlobalVar.hpp -> GlobalState.hpp + config.hpp
-extendstion -> extensions
-```
-
-การย้ายแบบนี้ไม่จำเป็นต้องทำพร้อมกันทั้งหมดใน 1 commit แต่ควรทำทีละช่วง เพื่อให้ build เสถียรและตรวจสอบง่าย
+โครงสร้างนี้ยังใช้ singleton, shared globals และมี dependency ข้ามโมดูล ไม่ใช่ระบบที่แยกชั้นได้อย่างสมบูรณ์ `SoundManager.cpp` ยังรวม capture/recording/inference เพราะใช้ buffer และ task ร่วมกัน ดู [ข้อจำกัด](../reviews/CODE_REVIEW.md) ก่อนแยกเพิ่ม

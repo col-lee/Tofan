@@ -1,13 +1,14 @@
+// Coordinates the AI Pet capture cycle, response task and RGB updates.
 #include "AppCoordinator.hpp"
-#include "../extensions/GlobalVar.hpp"
-#include "../extensions/DisplayManager.hpp"
-#include "../extensions/Network.hpp"
-#include "../extensions/AIConversation.hpp"
-#include "../extensions/FileManager.hpp"
-#include "../extensions/SoundManager.hpp"
-#include "../extensions/IOManager.hpp"
-#include "../extensions/HardwareManager.hpp"
-#include "../extensions/RGBLed.hpp"
+#include "../core/SharedResources.hpp"
+#include "../display/DisplayManager.hpp"
+#include "../network/Network.hpp"
+#include "../ai/AIConversation.hpp"
+#include "../storage/FileManager.hpp"
+#include "../audio/SoundManager.hpp"
+#include "../hardware/IOManager.hpp"
+#include "../hardware/HardwareManager.hpp"
+#include "../hardware/RGBLed.hpp"
 #include "../core/GlobalState.hpp"
 
 AppCoordinator appCoordinator;

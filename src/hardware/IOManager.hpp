@@ -1,7 +1,8 @@
+// Configures input pins and reads buttons using the configured active level.
 #ifndef IOMANAGER_HPP
 #define IOMANAGER_HPP
 
-#include "GlobalVar.hpp"
+#include "../core/SharedResources.hpp"
 #include "../core/Config.hpp"
 #include <Arduino.h>
 

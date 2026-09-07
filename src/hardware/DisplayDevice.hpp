@@ -1,12 +1,9 @@
 #pragma once
 
-#include <Arduino.h>
-#include <ArduinoJson.h>
-#include <SPI.h>
+// ST7789 panel and SPI bus configuration, with the shared display instances.
+// Include SD before LovyanGFX so its filesystem image decoder adapters are enabled.
 #include <SD.h>
 #include <LovyanGFX.hpp>
-
-#include "event.hpp"
 #include "../core/Config.hpp"
 
 class LGFX : public lgfx::LGFX_Device {
@@ -40,21 +37,3 @@ public:
 
 extern LGFX tft;
 extern LGFX_Sprite spr;
-
-// Shared runtime resources used by display/audio/network modules.
-extern SemaphoreHandle_t sdSemaphore;
-extern SemaphoreHandle_t displaySemaphore;
-extern TaskHandle_t t_handleAudio;
-extern TaskHandle_t t_handleDisplay;
-extern TaskHandle_t runnet;
-extern QueueHandle_t display_command;
-extern QueueHandle_t audio_command;
-extern QueueHandle_t api_event_queue;
-
-extern bool isNetwork_install;
-extern bool isDisplay_install;
-extern bool isAudio_install;
-extern bool isFileManager_install;
-extern bool isConnectSDcard;
-
-

@@ -1,3 +1,4 @@
+// Updates the NeoPixel color animation without blocking the application loop.
 #ifndef RGB_LED_HPP
 #define RGB_LED_HPP
 

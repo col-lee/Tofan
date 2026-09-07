@@ -1,3 +1,4 @@
+// Coordinates the AI Pet capture cycle, response task and RGB updates.
 #pragma once
 
 class AppCoordinator {

@@ -1,7 +1,9 @@
+// Owns speaker playback, I2S capture, WAV recording and local voice inference.
 #include "SoundManager.hpp"
-#include "DisplayManager.hpp"
-#include "FileManager.hpp"
-#include "Network.hpp"
+#include "RecordingPath.hpp"
+#include "../display/DisplayManager.hpp"
+#include "../storage/FileManager.hpp"
+#include "../network/Network.hpp"
 #include "../core/GlobalState.hpp"
 #include <ArduinoJson.h>
 #include "ToFan-project-1_inferencing.h"
@@ -9,14 +11,14 @@
 Audio audio;
 bool isAudio_install;
 
-String currentFilePath = ""; 
+String currentFilePath = "";
 
-String currentSongTitle = "Unknown";
+String currentSongTitle = "Choose a track";
 uint32_t currentAudioTime = 0;
 uint32_t totalAudioDuration = 0;
 
-bool isPlayingAudio = false; 
-int currentAudioProgress = 0; 
+bool isPlayingAudio = false;
+int currentAudioProgress = 0;
 unsigned long lastProgressUpdate = 0;
 bool autoPlayNext = false;
 
@@ -89,7 +91,14 @@ struct wav_header_t {
 
 File recordFile;
 uint32_t totalSize = 0;
+static uint32_t nextRecordingNumber = 1;
+static String recordingName = "No recording yet";
 
+const String& getRecordingName() { return recordingName; }
+
+bool isOnlineAudio = false;
+bool hasPausedAudio = false;
+const char* onlineStationNames[] = {"Radio Paradise", "SomaFM Groove Salad", "Lofi"};
 const int MAX_STATIONS = 3;
 String onlineStations[MAX_STATIONS] = {
     "http://stream.radioparadise.com/aac-128",      // สถานีที่ 1: Radio Paradise
@@ -109,10 +118,7 @@ void initAudio(){
   }
   audio.setVolume(50);
 
-  if (xSemaphoreTake(sdSemaphore, pdMS_TO_TICKS(500)) == pdTRUE) {
-    audio.connecttoFS(SD, "/main/Musics/ใจรัก.mp3");
-    xSemaphoreGive(sdSemaphore);
-  }
+
 }
 
 void initMicrophone() {
@@ -237,11 +243,11 @@ static void capture_samples(void* arg) {
 }
 
 /**
- * @brief      Init inferencing struct and setup/start PDM
+ * @brief      Allocate inference buffers, initialize I2S and start the capture task.
  *
- * @param[in]  n_samples  The n samples
+ * @param[in]  n_samples  Number of samples in each inference buffer.
  *
- * @return     { description_of_the_return_value }
+ * @return     True if buffers, I2S, recorder queue and capture task were created.
  */
 static bool microphone_inference_start(uint32_t n_samples)
 {
@@ -297,9 +303,9 @@ static bool microphone_inference_start(uint32_t n_samples)
 }
 
 /**
- * @brief      Wait on new data
+ * @brief      Consume the ready flag without waiting for new microphone data.
  *
- * @return     True when finished
+ * @return     True when a completed inference buffer is available.
  */
 static bool microphone_inference_record(void)
 {
@@ -372,49 +378,59 @@ void handleAudio(void *parameter) {
     STATE_PLAYING,
     STATE_PAUSED
   } currentState = STATE_STOPPED;
-  
+
   unsigned long lastVolumeUpdate = 0;
   unsigned long lastWsUpdate = 0;
-  
+
   for(;;) {
     if (xQueueReceive(audio_command, &cmd, 0) == pdPASS) {
+      if (!cmd.path.valid) { Serial.println("Audio path too long"); continue; }
+      const String requestedPath(cmd.path.c_str());
       if (cmd.module == AUDIO_COMMAND::MODULE::AUDIO) {
         switch (cmd.audio_state) {
-          case AUDIO_COMMAND::AUDIO_STATE::PLAY:
-            if(cmd.path != "" && cmd.path != "null") {
-              currentFilePath = cmd.path; 
-              audio.pauseResume();
-              audio.stopSong(); 
+          case AUDIO_COMMAND::AUDIO_STATE::PLAY: {
+            bool connected = false;
+            if(requestedPath != "" && requestedPath != "null") {
+              currentFilePath = requestedPath;
+              audio.stopSong();
+              currentAudioProgress = 0;
+              currentAudioTime = 0;
+              totalAudioDuration = 0;
+              isOnlineAudio = currentFilePath.startsWith("http://") || currentFilePath.startsWith("https://");
 
               if (currentFilePath.startsWith("http://") || currentFilePath.startsWith("https://")) {
-                  audio.connecttohost(currentFilePath.c_str());
-                  currentSongTitle = "Connecting..."; // ตั้งชื่อรอไว้ก่อน
+                  currentSongTitle = "Online radio";
+                  connected = audio.connecttohost(currentFilePath.c_str()); // ตั้งชื่อรอไว้ก่อน
               } else {
                   if(xSemaphoreTake(sdSemaphore, pdMS_TO_TICKS(500)) == pdTRUE) {
-                    audio.connecttoSD(currentFilePath.c_str());
+                    connected = audio.connecttoSD(currentFilePath.c_str());
                     xSemaphoreGive(sdSemaphore);
                   }
-                  
-                  int lastSlashIndex = cmd.path.lastIndexOf('/');
+
+                  int lastSlashIndex = requestedPath.lastIndexOf('/');
                   if (lastSlashIndex >= 0) {
-                      currentSongTitle = cmd.path.substring(lastSlashIndex + 1);
+                      currentSongTitle = requestedPath.substring(lastSlashIndex + 1);
                   } else {
-                      currentSongTitle = cmd.path; 
+                      currentSongTitle = requestedPath;
                   }
               }
-              
+
             }
             else {
-              if (currentState == STATE_PAUSED) audio.pauseResume();
+              if (currentState == STATE_PAUSED) connected = audio.pauseResume();
             }
-            currentState = STATE_PLAYING;
-            isPlayingAudio = true;
+            currentState = connected ? STATE_PLAYING : STATE_STOPPED;
+            isPlayingAudio = connected;
+            hasPausedAudio = false;
+            if (!connected) currentSongTitle = "Unable to play - retry";
             break;
-            
+          }
+
           case AUDIO_COMMAND::AUDIO_STATE::PUASE:
             if(currentState == STATE_PLAYING) {
               audio.pauseResume();
               currentState = STATE_PAUSED;
+              hasPausedAudio = true;
               isPlayingAudio = false;
             }
             break;
@@ -424,28 +440,29 @@ void handleAudio(void *parameter) {
             currentState = STATE_PLAYING;
             isPlayingAudio = true;
             break;
-            
+
           case AUDIO_COMMAND::AUDIO_STATE::STOP:
             audio.stopSong();
+            hasPausedAudio = false;
             currentState = STATE_STOPPED;
             isPlayingAudio = false;
             break;
         }
       }
     }
-    
-    if (isConnectSDcard) {
+
+    if (isConnectSDcard && !isOnlineAudio) {
       if (currentState == STATE_PLAYING) {
         if(xSemaphoreTake(sdSemaphore, pdMS_TO_TICKS(5)) == pdTRUE) {
-            audio.loop(); 
+            audio.loop();
             xSemaphoreGive(sdSemaphore);
         }
       }
-      
+
       if (currentState == STATE_PLAYING && (millis() - lastProgressUpdate >= 1000)) {
             totalAudioDuration = audio.getAudioFileDuration();
             currentAudioTime = audio.getAudioCurrentTime();
-            
+
             if(totalAudioDuration > 0) {
                 currentAudioProgress = (currentAudioTime * 100) / totalAudioDuration;
             }
@@ -456,11 +473,17 @@ void handleAudio(void *parameter) {
         audio.loop();
       }
     }
-    
+
+    if (currentState == STATE_PLAYING && !audio.isRunning()) {
+      currentState = STATE_STOPPED;
+      isPlayingAudio = false;
+      hasPausedAudio = false;
+      if (isOnlineAudio) currentSongTitle = "Stream ended - retry";
+    }
     if(currentState == STATE_STOPPED || currentState == STATE_PAUSED) {
       vTaskDelay(pdMS_TO_TICKS(500));
     } else {
-      vTaskDelay(pdMS_TO_TICKS(1)); 
+      vTaskDelay(pdMS_TO_TICKS(1));
     }
   }
 }
@@ -474,13 +497,12 @@ void audio_info(const char *info){
 void audio_id3data(const char *info){
     Serial.print("ID3 Data: ");
     Serial.println(info);
-    
+
     String id3 = String(info);
     // ไลบรารีจะส่งข้อความมาในรูปแบบ "Title: ชื่อเพลง"
     if(id3.startsWith("Title: ")){
         currentSongTitle = id3.substring(7); // ตัดคำว่า "Title: " ออก
-        
-        // อัปเดตชื่อเพลงกลับไปที่ Web ทันที
+
     }
 }
 
@@ -488,8 +510,8 @@ void audio_id3data(const char *info){
 void audio_eof_mp3(const char *info){
     Serial.print("End of File: ");
     Serial.println(info);
-    
-    // แจ้งเตือนหน้าเว็บว่าเพลงหยุดแล้ว (หรือคุณสามารถเขียนโค้ด Auto-play เพลงถัดไปตรงนี้ได้)
+
+    // ตั้งแฟล็กเมื่อจบไฟล์; ยังไม่มีตัวอ่านแฟล็กเพื่อเล่นเพลงถัดไป
     autoPlayNext = true;
 }
 
@@ -514,7 +536,7 @@ void exitRecordingMode() {
 }
 
 bool startRecording(const char* path) {
-    if (!app::runtime.isRecordingMode || !isFileManager_install || recordFile || path == nullptr) {
+    if (!app::runtime.isRecordingMode || !isFileManager_install || recordFile) {
         return false;
     }
     app::runtime.isRecording = false;
@@ -524,7 +546,20 @@ bool startRecording(const char* path) {
         return false;
     }
 
-    if (SD.exists(path) && !SD.remove(path)) {
+    char uniquePath[64];
+    const bool numbered = path == nullptr;
+    if (numbered) {
+        if (!recording::nextPath(nextRecordingNumber,
+                [](const char* candidate) { return SD.exists(candidate); }, uniquePath, sizeof(uniquePath))) {
+            xSemaphoreGive(sdSemaphore);
+            Serial.println("Unable to allocate a new recording filename");
+            return false;
+        }
+        path = uniquePath;
+    }
+
+    // Only explicit scratch paths (AI Pet) may replace an existing file.
+    if (!numbered && SD.exists(path) && !SD.remove(path)) {
         xSemaphoreGive(sdSemaphore);
         Serial.println("Unable to replace recording");
         return false;
@@ -550,6 +585,10 @@ bool startRecording(const char* path) {
     }
     xSemaphoreGive(sdSemaphore);
 
+    if (numbered) {
+        const char* basename = strrchr(path, '/');
+        recordingName = basename ? basename + 1 : path;
+    }
     totalSize = 0;
     recordingDroppedFrames = 0;
     xQueueReset(recorderQueue);
@@ -624,4 +663,11 @@ uint32_t getMicrophoneReadErrors() {
 
 uint32_t getRecordingDroppedFrames() {
     return recordingDroppedFrames;
+}
+
+void audio_showstation(const char *info) {
+    if (info && *info) currentSongTitle = info;
+}
+void audio_showstreamtitle(const char *info) {
+    if (info && *info) currentSongTitle = info;
 }
