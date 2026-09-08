@@ -16,7 +16,8 @@
     extern const char* onlineStationNames[];
     extern int currentAudioProgress;
     extern unsigned long lastProgressUpdate;
-    extern bool autoPlayNext;
+    uint32_t consumeFinishedTrack();
+    int consumeStartedTrack();
     extern uint32_t currentAudioTime;
     extern uint32_t totalAudioDuration;
     extern int currentStationIndex;
@@ -28,6 +29,8 @@ extern Audio audio;
 extern bool isAudio_install;
 
 void initAudio();
+void setOutputVolume(int percent);
+void setVoiceAssistantEnabled(bool enabled);
 void initMicrophone();
 int16_t readMicData();
 void handleAudio(void *parameter);

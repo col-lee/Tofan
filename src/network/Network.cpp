@@ -4,6 +4,7 @@
 #include "../ai/AIConversation.hpp"
 #include "../storage/FileManager.hpp"
 #include <stdlib.h>
+#include <atomic>
 #include <string.h>
 
 DNSServer dnsServer;
@@ -12,6 +13,10 @@ AsyncWebSocket websocket("/ws");
 IPAddress apIP(192,168,4,1);
 Preferences prefs; // NVS storage for Wi-Fi and Admin settings.
 NetworkManager nm;
+static std::atomic<int> requestedNetwork{-1};
+static std::atomic<bool> applyingNetwork{false};
+void requestNetworkSettings(bool wifi, bool admin) { requestedNetwork.store((wifi?1:0)|(admin?2:0)); }
+bool networkSettingsBusy() { return applyingNetwork.load() || requestedNetwork.load() >= 0; }
 
 int timeout_wifi_connection = 10;
 
@@ -128,11 +133,9 @@ void NetworkManager::writeLog(String &log) {
 }
 
 void NetworkManager::closeWiFiSTA() {
-  MDNS.end();
-  WiFi.disconnect(true);
-  WiFi.mode(WIFI_OFF);
+  WiFi.disconnect(false);
+  WiFi.mode(isNetwork_install ? WIFI_AP : WIFI_OFF);
   isConnectWiFi = false;
-  Serial.println("WiFi off.");
 }
 
 bool NetworkManager::connectoWiFi(const char *ssid, const char *password)
@@ -149,21 +152,18 @@ bool NetworkManager::connectoWiFi(const char *ssid, const char *password)
   unsigned long interval = 1000;
   int seconds = 0;
 
-  WiFi.mode(WIFI_STA);
+  WiFi.mode(isNetwork_install ? WIFI_AP_STA : WIFI_STA);
   WiFi.begin(ssid, password);
   WiFi.setSleep(false);
   Serial.print("Connecting to wifi.");
   while (WiFi.status() != WL_CONNECTED)
   {
+    vTaskDelay(pdMS_TO_TICKS(20));
     unsigned long currentTime = millis();
     if (seconds >= timeout_wifi_connection) {
       Serial.println("");
       Serial.println("WiFi connect Time out.");
-      if (xSemaphoreTake(displaySemaphore, pdMS_TO_TICKS(50)) == pdTRUE)
-      {
-        tft.println("WiFi connect Time out.");
-        xSemaphoreGive(displaySemaphore);
-      }
+
       WiFi.disconnect();
       vTaskDelay(pdMS_TO_TICKS(100));
       isConnectWiFi = false;
@@ -175,11 +175,7 @@ bool NetworkManager::connectoWiFi(const char *ssid, const char *password)
       preTime = currentTime;
       seconds++;
       Serial.print(".");
-      if (xSemaphoreTake(displaySemaphore, pdMS_TO_TICKS(50)) == pdTRUE)
-      {
-        tft.print(".");
-        xSemaphoreGive(displaySemaphore);
-      }
+
     }
   }
 
@@ -193,16 +189,7 @@ bool NetworkManager::connectoWiFi(const char *ssid, const char *password)
     Serial.print("speed: ");
     Serial.println(WiFi.RSSI());
 
-    if(xSemaphoreTake(displaySemaphore ,pdMS_TO_TICKS(200)) == pdTRUE) {
-      tft.println("");
-      tft.println("WIFI Connected.");
-      tft.println("Ready.");
-      tft.print("IP: ");
-      tft.println(WiFi.localIP());
-      tft.print("speed: ");
-      tft.println(WiFi.RSSI());
-      xSemaphoreGive(displaySemaphore);
-    }
+
 
     if(MDNS.begin("terngai")) {
       Serial.println("mDNS responder started");
@@ -216,7 +203,7 @@ bool NetworkManager::connectoWiFi(const char *ssid, const char *password)
   else {
     Serial.println("WiFi connect Time out.");
     WiFi.disconnect();
-    WiFi.mode(WIFI_OFF);
+    WiFi.mode(isNetwork_install ? WIFI_AP : WIFI_OFF);
     MDNS.end();
     isConnectWiFi = false;
     return false;
@@ -238,21 +225,18 @@ bool NetworkManager::connectoWiFi() {
   unsigned long interval = 1000;
   int seconds = 0;
 
-  WiFi.mode(WIFI_STA);
+  WiFi.mode(isNetwork_install ? WIFI_AP_STA : WIFI_STA);
   WiFi.begin(prefs_Obj.ssid, prefs_Obj.password);
   WiFi.setSleep(false);
   Serial.print("Connecting to wifi.");
   while (WiFi.status() != WL_CONNECTED)
   {
+    vTaskDelay(pdMS_TO_TICKS(20));
     unsigned long currentTime = millis();
     if (seconds >= timeout_wifi_connection) {
       Serial.println("");
       Serial.println("WiFi connect Time out.");
-      if (xSemaphoreTake(displaySemaphore, pdMS_TO_TICKS(50)) == pdTRUE)
-      {
-        tft.println("WiFi connect Time out.");
-        xSemaphoreGive(displaySemaphore);
-      }
+
       WiFi.disconnect();
       vTaskDelay(pdMS_TO_TICKS(100));
       isConnectWiFi = false;
@@ -264,11 +248,7 @@ bool NetworkManager::connectoWiFi() {
       preTime = currentTime;
       seconds++;
       Serial.print(".");
-      if (xSemaphoreTake(displaySemaphore, pdMS_TO_TICKS(50)) == pdTRUE)
-      {
-        tft.print(".");
-        xSemaphoreGive(displaySemaphore);
-      }
+
     }
   }
 
@@ -282,16 +262,7 @@ bool NetworkManager::connectoWiFi() {
     Serial.print("speed: ");
     Serial.println(WiFi.RSSI());
 
-    if(xSemaphoreTake(displaySemaphore ,pdMS_TO_TICKS(200)) == pdTRUE) {
-      tft.println("");
-      tft.println("WIFI Connected.");
-      tft.println("Ready.");
-      tft.print("IP: ");
-      tft.println(WiFi.localIP());
-      tft.print("speed: ");
-      tft.println(WiFi.RSSI());
-      xSemaphoreGive(displaySemaphore);
-    }
+
 
     if(MDNS.begin("terngai")) {
       Serial.println("mDNS responder started");
@@ -305,7 +276,7 @@ bool NetworkManager::connectoWiFi() {
   else {
     Serial.println("WiFi connect Time out.");
     WiFi.disconnect();
-    WiFi.mode(WIFI_OFF);
+    WiFi.mode(isNetwork_install ? WIFI_AP : WIFI_OFF);
     MDNS.end();
     isConnectWiFi = false;
     return false;
@@ -318,7 +289,7 @@ void NetworkManager::startAPMode() {
   // ########################################################################################
   // #                                    WIFI AP SETTING                                   #
   // ########################################################################################
-  WiFi.mode(WIFI_AP);
+  WiFi.mode(WiFi.status() == WL_CONNECTED ? WIFI_AP_STA : WIFI_AP);
   WiFi.softAPConfig(apIP, apIP, IPAddress(255, 255, 255, 0));
   WiFi.softAP("terngai555", "esp32-pass", 1, 0, 1);
 
@@ -705,13 +676,12 @@ void NetworkManager::startAdminMode() {
 }
 
 void NetworkManager::stopAdminMode() {
-  server.end();
-  dnsServer.stop();
+  const bool stationConnected = WiFi.status() == WL_CONNECTED;
+  server.end(); dnsServer.stop();
   WiFi.softAPdisconnect(true);
-  WiFi.mode(WIFI_OFF);
   isNetwork_install = false;
-  isConnectWiFi = false;
-  Serial.println("Admin Mode Stopped. RAM Freed!");
+  WiFi.mode(stationConnected ? WIFI_STA : WIFI_OFF);
+  isConnectWiFi = stationConnected;
 }
 
 void handleWebSocketMessage(AsyncWebSocketClient *client, void *arg, uint8_t *data, size_t len) {
@@ -786,9 +756,17 @@ void onWsEvent(AsyncWebSocket *server, AsyncWebSocketClient *client, AwsEventTyp
 
 void runNet(void* pvParameter) {
   for(;;) {
-
+    const int desired=requestedNetwork.exchange(-1);
+    if (desired >= 0) {
+      applyingNetwork.store(true);
+      if (!(desired&2) && isNetwork_install) nm.stopAdminMode();
+      if ((desired&2) && !isNetwork_install) nm.startAdminMode();
+      if (desired&1) { if (WiFi.status()!=WL_CONNECTED) nm.connectoWiFi(); }
+      else nm.closeWiFiSTA();
+      applyingNetwork.store(false);
+    }
     if(isNetwork_install){
-      if(WiFi.getMode() == WIFI_MODE_AP) {
+      if(WiFi.getMode() == WIFI_MODE_AP || WiFi.getMode() == WIFI_MODE_APSTA) {
         dnsServer.processNextRequest();
       }
        websocket.cleanupClients();

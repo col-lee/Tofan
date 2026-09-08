@@ -1,0 +1,9 @@
+{"op":"rect","a":[0,0,320,240,63454]}
+{"op":"text","a":[16,10,4,0,8583],"text":"Volume"}
+{"op":"text","a":[17,40,1,0,27567],"text":"Turn to adjust your listening level"}
+{"op":"round","a":[16,64,288,135,18,57244]}
+{"op":"text","a":[160,111,6,4,8583],"text":"50"}
+{"op":"text","a":[160,145,1,4,27567],"text":"out of 100"}
+{"op":"round","a":[36,172,248,7,3,63454]}
+{"op":"rect","a":[36,172,124,7,36438]}
+{"op":"text","a":[160,230,1,4,27567],"text":"Press or wait to return"}

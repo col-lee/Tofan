@@ -1,0 +1,11 @@
+{"op":"rect","a":[0,0,320,240,63454]}
+{"op":"text","a":[16,10,4,0,8583],"text":"Go online"}
+{"op":"text","a":[17,40,1,0,27567],"text":"Network connection"}
+{"op":"round","a":[16,60,288,140,16,57244]}
+{"op":"text","a":[160,88,2,4,8583],"text":"Connect to saved Wi-Fi?"}
+{"op":"text","a":[160,114,1,4,27567],"text":"Manage Wi-Fi in Network settings"}
+{"op":"round","a":[32,146,116,34,12,46874]}
+{"op":"text","a":[90,163,2,4,6470],"text":"Connect"}
+{"op":"round","a":[172,146,116,34,12,63454]}
+{"op":"text","a":[230,163,2,4,8583],"text":"Cancel"}
+{"op":"text","a":[160,230,1,4,27567],"text":"Press to choose  /  Back to return"}

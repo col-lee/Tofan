@@ -4,6 +4,7 @@
 #include "../audio/SoundManager.hpp"
 #include "../core/GlobalState.hpp"
 #include <WiFi.h>
+#include "../network/Network.hpp"
 
 LGFX tft;
 LGFX_Sprite spr(&tft);
@@ -70,152 +71,67 @@ void DisplayManager::deleteUISprite() {
 // ----------------------------------------------------
 // 1. หน้า Loading
 // ----------------------------------------------------
+void DisplayManager::applyTheme() {
+    auto color=[](int role) { return preferences::rgb565(preferences::rgb(userSettings.values.colors[role])); };
+    C_BG=color(preferences::Background); C_CARD=color(preferences::Surface);
+    C_TEXT=color(preferences::Text); C_BAR_FG=color(preferences::Accent);
+    C_MUTED=color(preferences::Muted); C_HILITE=color(preferences::Selection);
+    C_BAR_BG=C_CARD;
+    C_SELECT_TEXT=preferences::dark(preferences::rgb(userSettings.values.colors[preferences::Selection])) ? TFT_WHITE : tft.color565(30,42,48);
+}
+void DisplayManager::present(bool push) {
+    if (push && xSemaphoreTake(displaySemaphore,portMAX_DELAY)==pdTRUE) {
+        spr.pushSprite(0,0); xSemaphoreGive(displaySemaphore);
+    }
+}
+void DisplayManager::pageHeader(const String& title, const String& subtitle) {
+    spr.fillSprite(C_BG); spr.setTextSize(1); spr.setTextFont(1);
+    spr.setTextDatum(TL_DATUM); spr.setTextColor(C_TEXT);
+    spr.drawString(title,16,10,4);
+    if (subtitle.length()) { spr.setTextColor(C_MUTED); spr.drawString(subtitle,17,40,1); }
+}
+void DisplayManager::footer(const String& text) {
+    spr.setTextDatum(MC_DATUM); spr.setTextColor(C_MUTED); spr.setTextFont(1);
+    spr.drawString(text,tft.width()/2,tft.height()-10,1);
+}
+void DisplayManager::toggle(int x, int y, bool on) {
+    spr.fillRoundRect(x,y,42,22,11,on?C_BAR_FG:C_MUTED);
+    spr.fillCircle(x+(on?31:11),y+11,8,C_BG);
+}
 void DisplayManager::drawLoading(int percent, String text) {
-    // Skip rendering until the sprite buffer is available.
-    if(spr.getBuffer() == nullptr) return;
-
-    spr.fillSprite(TFT_BLACK);
-
-    int barWidth = 200;
-    int barHeight = 8;
-    int x = (tft.width() - barWidth) / 2;
-    int y = 140;
-
-    spr.fillRoundRect(x, y, barWidth, barHeight, 4, C_BAR_BG);
-    spr.fillRoundRect(x, y, (barWidth * percent) / 100, barHeight, 4, C_BAR_FG);
-
-    spr.setTextColor(C_TEXT);
-    spr.setTextDatum(MC_DATUM);
-    spr.drawString("ToFan OS Booting...", tft.width()/2, 110);
-    spr.drawString(text, tft.width()/2, 160);
-
-    if (xSemaphoreTake(displaySemaphore, portMAX_DELAY) == pdTRUE){
-        spr.pushSprite(0, 0);
-        xSemaphoreGive(displaySemaphore);
-    }
+    if (!spr.getBuffer()) return;
+    pageHeader("ToFan", "A little space for your day");
+    spr.setTextDatum(MC_DATUM); spr.setTextColor(C_TEXT);
+    spr.drawString(text,tft.width()/2,112,2);
+    spr.fillRoundRect(28,146,tft.width()-56,6,3,C_CARD);
+    int fill=(tft.width()-56)*preferences::clamp(percent,0,100)/100;
+    if(fill) spr.fillRect(28,146,fill,6,C_BAR_FG);
+    footer("Starting up"); present(true);
 }
-
-
-// ----------------------------------------------------
-// 2. หน้า Home: เมนูไอคอนแบบวนรอบ
-// ----------------------------------------------------
 void DisplayManager::drawHomeMenu(bool pushToScreen) {
-    if(spr.getBuffer() == nullptr) return;
-
-    spr.fillSprite(C_BG);
-
-    // 1. คำนวณ Animation Index (Lerp) วิ่งตามค่าเป้าหมายดิบ
-    animatedMenuIndex += (animatedMenuIndex_target - animatedMenuIndex) * 0.12;
-
-    if (abs(animatedMenuIndex_target - animatedMenuIndex) < 0.01) {
-        animatedMenuIndex = animatedMenuIndex_target;
-        isAnimatingMenu = false;
-    } else {
-        isAnimatingMenu = true;
+    if (!spr.getBuffer()) return;
+    pageHeader("Home", "Your music, moments and little assistant");
+    const char* labels[]={"Pictures","Music","Settings","AI Pet","Devices","Recorder"};
+    const int cw=(tft.width()-44)/2;
+    for(int i=0;i<6;++i) {
+        int x=16+(i%2)*(cw+12),y=56+(i/2)*52;
+        const bool selected=i==currentMenuIndex;
+        const uint16_t ink=selected?C_SELECT_TEXT:C_TEXT;
+        spr.fillRoundRect(x,y,cw,44,12,selected?C_HILITE:C_CARD);
+        if(selected) spr.drawRoundRect(x,y,cw,44,12,C_BAR_FG);
+        if(i==0) { spr.drawRoundRect(x+12,y+12,20,18,3,ink); spr.fillTriangle(x+14,y+27,x+22,y+19,x+29,y+27,ink); }
+        else if(i==1) { spr.fillRect(x+24,y+10,3,22,ink); spr.fillRect(x+26,y+10,8,3,ink); spr.fillEllipse(x+20,y+30,6,4,ink); }
+        else if(i==2) { for(int j=0;j<3;++j) spr.drawLine(x+12,y+14+j*8,x+32,y+14+j*8,ink); spr.fillCircle(x+19,y+14,3,ink); spr.fillCircle(x+27,y+22,3,ink); }
+        else if(i==3) { spr.drawRoundRect(x+10,y+11,24,23,8,ink); spr.fillCircle(x+17,y+21,2,ink); spr.fillCircle(x+27,y+21,2,ink); }
+        else if(i==4) { spr.drawRoundRect(x+12,y+10,20,24,4,ink); spr.fillCircle(x+22,y+29,2,ink); }
+        else { spr.fillRoundRect(x+19,y+10,8,17,4,ink); spr.drawRoundRect(x+15,y+15,16,16,7,ink); spr.drawLine(x+23,y+30,x+23,y+35,ink); }
+        spr.setTextDatum(ML_DATUM); spr.setTextColor(ink); spr.drawString(labels[i],x+43,y+22,2);
     }
-
-    int centerX = tft.width() / 2;
-    int centerY = 105;
-    int spacingX = 110;
-    float curveIntensity = 12.0;
-
-    const char* menus[totalItems] = {"Display", "Music", "Settings", "Pet", "Debug", "Recorde"};
-
-    for (int i = 0; i < totalItems; i++) {
-        // 2. Infinite Loop Logic: ใช้ fmod เพื่อให้ค่าวนลูป 0-5 เสมอ
-        // และคำนวณระยะห่าง (distance) แบบวงกลม
-        float distance = i - fmod(animatedMenuIndex, (float)totalItems);
-        while (distance > totalItems / 2.0) distance -= totalItems;
-        while (distance < -totalItems / 2.0) distance += totalItems;
-
-        if (abs(distance) > 2.2) continue;
-
-        int x = centerX + (distance * spacingX);
-        int y = centerY + (distance * distance * curveIntensity);
-
-        float scale = 1.0 - (abs(distance) * 0.45);
-        if (scale < 0.45) scale = 0.45;
-        int iconSize = 90 * scale;
-
-        // 3. ปรับสีตามความใกล้เคียง (Fading)
-        // ใช้ i เทียบกับ currentMenuIndex ที่คำนวณใน InputController.cpp
-        uint16_t color = (i == currentMenuIndex) ? C_HILITE : C_CARD;
-        uint16_t iconColor = (i == currentMenuIndex) ? C_BG : C_BAR_BG;
-
-        spr.fillRoundRect(x - iconSize/2, y - iconSize/2, iconSize, iconSize, 20 * scale, color);
-        spr.setTextColor(iconColor);
-        spr.setTextDatum(MC_DATUM);
-
-        // --- วาดไอคอน ---
-        if (i == 0) { // Display
-            // 1. วาดตัวเครื่อง/กรอบจอ (Main Monitor Body)
-            int monitorW = 40 * scale;
-            int monitorH = 28 * scale;
-            spr.fillRoundRect(x - monitorW / 2, y - monitorH / 2 - (4 * scale), monitorW, monitorH, 3 * scale, iconColor);
-
-            // 2. วาดหน้าจอข้างใน (Inner Screen / Glow) - ใช้สีพื้นหลัง (color) เจาะรูให้ดูมีมิติ
-            int screenW = 34 * scale;
-            int screenH = 22 * scale;
-            spr.fillRect(x - screenW / 2, y - screenH / 2 - (4 * scale), screenW, screenH, color);
-
-            // 3. วาดฐานตั้งจอ (Monitor Stand)
-            // ก้านคอจอ
-            spr.fillRect(x - (2 * scale), y + (10 * scale), 4 * scale, 6 * scale, iconColor);
-            // ฐานล่าง
-            spr.fillRoundRect(x - (12 * scale), y + (14 * scale), 24 * scale, 4 * scale, 2 * scale, iconColor);
-        }
-        else if (i == 1) { // Music
-            int noteX = x - (5 * scale); // ปรับตำแหน่งเล็กน้อยให้สมดุล
-            int noteY = y + (5 * scale);
-
-            // วาดหัวตัวโน้ต (วงกลมเอียงๆ)
-            spr.fillEllipse(noteX, noteY, 8 * scale, 6 * scale, iconColor);
-
-            // วาดก้านตัวโน้ต
-            spr.fillRect(noteX + (5 * scale), noteY - (25 * scale), 3 * scale, 25 * scale, iconColor);
-
-            // วาดธงตัวโน้ต (ใช้ Triangle หรือ Rect เฉียงๆ)
-            spr.fillTriangle(noteX + (8 * scale), noteY - (25 * scale),
-                             noteX + (20 * scale), noteY - (15 * scale),
-                             noteX + (8 * scale), noteY - (18 * scale), iconColor);
-        }
-        else if (i == 2) { // Settings
-            spr.fillCircle(x, y, 18*scale, iconColor);
-            spr.fillCircle(x, y, 8*scale, color);
-        }
-        else if (i == 3) { // Pet
-            spr.fillCircle(x, y, 18*scale, iconColor);
-            spr.fillCircle(x - 6*scale, y - 3*scale, 3*scale, color);
-            spr.fillCircle(x + 6*scale, y - 3*scale, 3*scale, color);
-        }
-        else if (i == 4) { // About
-            spr.drawString("?", x, y, 4);
-        }
-
-        else if(i == 5) {
-            spr.fillCircle(x, y, 18*scale, TFT_RED);
-        }
-
-        // 4. วาดชื่อเมนูเฉพาะตัวที่ "ถูกเลือก" (Active Feature)
-        if (i == currentMenuIndex) {
-            // คำนวณค่าความโปร่งใสหลอกๆ (ค่อยๆ ชัดขึ้นเมื่อเข้ากลางจอ)
-            spr.setTextColor(C_TEXT);
-            spr.setTextDatum(BC_DATUM);
-            spr.drawString(menus[i], centerX, 225, 2);
-        }
-    }
-
-    if (pushToScreen) {
-        if(xSemaphoreTake(displaySemaphore, 0) == pdTRUE) {
-            spr.pushSprite(0, 0);
-            xSemaphoreGive(displaySemaphore);
-        }
-    }
+    footer("Turn to browse  /  Press to open");
+    isAnimatingMenu=false; animatedMenuIndex=animatedMenuIndex_target;
+    present(pushToScreen);
 }
 
-// ----------------------------------------------------
-// 3. หน้า Music Player (Modern UI)
-// ----------------------------------------------------
 void DisplayManager::drawMusicPlayer(String songName, int progress, bool isPlaying, bool pushToScreen) {
     drawMusicSurface(false, playlistNames.empty() ? "No tracks on SD" : isOnlineAudio ? "Choose a track" : songName, isOnlineAudio ? 0 : progress,
                      isPlaying && !isOnlineAudio, pushToScreen);
@@ -224,19 +140,19 @@ void DisplayManager::drawMusicPlayer(String songName, int progress, bool isPlayi
 void DisplayManager::drawMusicSurface(bool online, String title, int progress, bool playing, bool pushToScreen) {
     if (!spr.getBuffer()) return;
     const int w = tft.width(), h = tft.height();
-    const uint16_t ink = tft.color565(28, 37, 43);
-    const uint16_t muted = tft.color565(103, 115, 121);
-    const uint16_t accent = tft.color565(34, 128, 111);
-    const uint16_t paper = tft.color565(247, 248, 245);
-    const uint16_t soft = tft.color565(228, 235, 229);
+    const uint16_t ink = C_TEXT;
+    const uint16_t muted = C_MUTED;
+    const uint16_t accent = C_BAR_FG;
+    const uint16_t paper = C_BG;
+    const uint16_t soft = C_CARD;
     spr.fillSprite(paper);
     spr.setTextDatum(TL_DATUM);
     spr.setTextColor(ink);
     spr.drawString("Music", 18, 12, 4);
     const int sourceIndex = online ? 3 : 4;
     const bool sourceFocused = currentMusicControlIndex == sourceIndex;
-    spr.fillRoundRect(w - 96, 14, 78, 27, 13, sourceFocused ? accent : soft);
-    spr.setTextColor(sourceFocused ? TFT_WHITE : ink);
+    spr.fillRoundRect(w - 96, 14, 78, 27, 13, sourceFocused ? C_HILITE : soft);
+    spr.setTextColor(sourceFocused ? C_SELECT_TEXT : ink);
     spr.setTextDatum(MC_DATUM);
     spr.drawString(online ? "SD card" : "Online", w - 57, 27, 2);
 
@@ -260,7 +176,8 @@ void DisplayManager::drawMusicSurface(bool online, String title, int progress, b
     spr.setTextColor(ink);
     spr.drawString(title, 96, 77, 2);
     spr.setTextColor(muted);
-    const char* status = online && WiFi.status() != WL_CONNECTED ? "Wi-Fi required" :
+    const char* status = online && networkSettingsBusy() ? "Connecting to Wi-Fi..." :
+                         online && WiFi.status() != WL_CONNECTED ? "Wi-Fi required" :
                          playing ? (online ? "Live stream" : "Playing") : "Ready / paused";
     spr.drawString(status, 96, 101, 1);
     if (online) {
@@ -271,12 +188,12 @@ void DisplayManager::drawMusicSurface(bool online, String title, int progress, b
         spr.fillRoundRect(18, 137, w - 36, 4, 2, soft);
         const int fill = (w - 36) * progress / 100;
         if (fill > 0) spr.fillRect(18, 137, fill, 4, accent);
-        spr.drawString(String(isOnlineAudio ? 0 : currentAudioTime / 60) + ":" +
-                       ((isOnlineAudio ? 0 : currentAudioTime % 60) < 10 ? "0" : "") +
-                       String(isOnlineAudio ? 0 : currentAudioTime % 60), 18, 148, 1);
+        char timeLabel[40];
+        preferences::playbackTime(timeLabel,sizeof(timeLabel),isOnlineAudio?0:currentAudioTime,isOnlineAudio?0:totalAudioDuration);
+        spr.drawString(timeLabel,18,149,1);
         const bool listFocused = currentMusicControlIndex == 3;
-        spr.fillRoundRect(w - 94, 146, 76, 23, 10, listFocused ? accent : soft);
-        spr.setTextColor(listFocused ? TFT_WHITE : ink);
+        spr.fillRoundRect(w - 94, 146, 76, 23, 10, listFocused ? C_HILITE : soft);
+        spr.setTextColor(listFocused ? C_SELECT_TEXT : ink);
         spr.setTextDatum(MC_DATUM);
         spr.drawString("Tracks", w - 56, 157, 1);
     }
@@ -284,8 +201,8 @@ void DisplayManager::drawMusicSurface(bool online, String title, int progress, b
     for (int i = 0; i < 3; ++i) {
         const int cx = w/2 + (i - 1) * 70;
         const bool focused = currentMusicControlIndex == i;
-        spr.fillCircle(cx, cy, i == 1 ? 24 : 20, focused ? accent : soft);
-        const uint16_t color = focused ? TFT_WHITE : ink;
+        spr.fillCircle(cx, cy, i == 1 ? 24 : 20, focused ? C_HILITE : soft);
+        const uint16_t color = focused ? C_SELECT_TEXT : ink;
         if (i == 1 && playing) {
             spr.fillRect(cx - 6, cy - 8, 4, 16, color);
             spr.fillRect(cx + 2, cy - 8, 4, 16, color);
@@ -299,7 +216,7 @@ void DisplayManager::drawMusicSurface(bool online, String title, int progress, b
     }
     spr.setTextColor(muted);
     spr.setTextDatum(MC_DATUM);
-    spr.drawString("Turn to select  /  Press to play", w/2, h - 9, 1);
+    spr.drawString(userSettings.values.shuffle ? "Shuffle on  /  Turn to select" : userSettings.values.autoNext ? "Auto-next on  /  Turn to select" : "Turn to select  /  Press to choose", w/2, h - 9, 1);
     if (pushToScreen && xSemaphoreTake(displaySemaphore, portMAX_DELAY) == pdTRUE) {
         spr.pushSprite(0, 0);
         xSemaphoreGive(displaySemaphore);
@@ -307,52 +224,19 @@ void DisplayManager::drawMusicSurface(bool online, String title, int progress, b
 }
 
 void DisplayManager::drawPopupNoMusic(bool pushToScreen) {
-    if(spr.getBuffer() == nullptr) return;
-
-    // วาดพื้นหลังเบลอๆ หรือสีทึบ
-    spr.fillSprite(C_BG);
-
-    // วาดกล่องข้อความ
-    int boxW = 200, boxH = 120;
-    int bx = (tft.width() - boxW) / 2;
-    int by = (tft.height() - boxH) / 2;
-    spr.fillRoundRect(bx, by, boxW, boxH, 10, C_CARD);
-
-    spr.setTextColor(C_TEXT);
-    spr.setTextDatum(MC_DATUM);
-    spr.drawString("Wi-Fi is offline", tft.width()/2, by + 30, 2);
-    spr.drawString("Connect to play online?", tft.width()/2, by + 50, 1);
-
-    // ปุ่ม Yes / No
-    int btnW = 60, btnH = 30;
-    int yBtn = by + 75;
-
-    // ปุ่ม Yes (Index 0)
-    if(popupSelectedIndex == 0) {
-        spr.fillRoundRect(bx + 20, yBtn, btnW, btnH, 5, C_HILITE);
-        spr.setTextColor(C_BG);
-    } else {
-        spr.fillRoundRect(bx + 20, yBtn, btnW, btnH, 5, C_BG);
-        spr.setTextColor(C_TEXT);
+    if (!spr.getBuffer()) return;
+    pageHeader("Go online", "Network connection");
+    spr.fillRoundRect(16,60,tft.width()-32,140,16,C_CARD);
+    spr.setTextColor(C_TEXT); spr.setTextDatum(MC_DATUM);
+    spr.drawString("Connect to saved Wi-Fi?",tft.width()/2,88,2);
+    spr.setTextColor(C_MUTED); spr.drawString("Manage Wi-Fi in Network settings",tft.width()/2,114,1);
+    for(int i=0;i<2;++i) {
+        const int x=32+i*140;
+        spr.fillRoundRect(x,146,116,34,12,popupSelectedIndex==i?C_HILITE:C_BG);
+        spr.setTextColor(popupSelectedIndex==i?C_SELECT_TEXT:C_TEXT);
+        spr.drawString(i==0?"Connect":"Cancel",x+58,163,2);
     }
-    spr.drawString("Yes", bx + 20 + btnW/2, yBtn + btnH/2, 2);
-
-    // ปุ่ม No (Index 1)
-    if(popupSelectedIndex == 1) {
-        spr.fillRoundRect(bx + boxW - 20 - btnW, yBtn, btnW, btnH, 5, C_HILITE);
-        spr.setTextColor(C_BG);
-    } else {
-        spr.fillRoundRect(bx + boxW - 20 - btnW, yBtn, btnW, btnH, 5, C_BG);
-        spr.setTextColor(C_TEXT);
-    }
-    spr.drawString("No", bx + boxW - 20 - btnW/2, yBtn + btnH/2, 2);
-
-    if (pushToScreen) {
-        if(xSemaphoreTake(displaySemaphore, portMAX_DELAY) == pdTRUE) {
-            spr.pushSprite(0, 0);
-            xSemaphoreGive(displaySemaphore);
-        }
-    }
+    footer("Press to choose  /  Back to return"); present(pushToScreen);
 }
 
 void DisplayManager::drawOnlineMusicPlayer(bool pushToScreen) {
@@ -364,46 +248,18 @@ void DisplayManager::drawOnlineMusicPlayer(bool pushToScreen) {
 // 4. หน้าต่าง Volume ด้านขวาของจอ
 // ----------------------------------------------------
 void DisplayManager::drawVolumeOverlay() {
-    if(spr.getBuffer() == nullptr) return;
-
-    // วาดหน้าจอเดิมทับไปก่อนเพื่อให้ดูเหมือนหลอดลอยทับอยู่
-    if(previousState == UI_STATE::HOME_MENU) drawHomeMenu(false);
-    else if(previousState == UI_STATE::APP_MUSIC) drawMusicPlayer(currentSongTitle, currentAudioProgress, isPlayingAudio, false);
-    else if(previousState == UI_STATE::APP_MUSIC_LIST) drawMusicList(false);
-    else if(previousState == UI_STATE::APP_DISPLAY_LIST) drawImageList(false);
-    else if(previousState == UI_STATE::APP_SETTINGS) drawSettings(false);
-    else if(previousState == UI_STATE::APP_ONLINE_MUSIC) drawOnlineMusicPlayer(false);
-
-    // Place the volume overlay at the right edge.
-    int boxW = 50, boxH = 180;
-    int boxX = tft.width() - boxW - 10; // ชิดขวา
-    int boxY = (tft.height() - boxH) / 2;
-
-    spr.fillRoundRect(boxX, boxY, boxW, boxH, 8, C_CARD);
-
-    // หลอดแนวตั้ง
-    int barW = 10, barH = 150;
-    int bx = boxX + (boxW - barW) / 2;
-    int by = boxY + 15;
-    spr.fillRect(bx, by, barW, barH, C_BAR_BG);
-
-    // คำนวณความสูงตาม volume (พิกัด Y กลับหัว)
-    int fillH = (barH * currentVolLevel) / 100;
-    spr.fillRect(bx, by + (barH - fillH), barW, fillH, C_BAR_FG);
-
-    spr.setTextColor(C_TEXT);
-    spr.setTextDatum(BC_DATUM);
-    spr.drawNumber(currentVolLevel, boxX + (boxW/2), boxY + boxH - 5);
-
-    if(xSemaphoreTake(displaySemaphore, portMAX_DELAY) == pdTRUE) {
-        spr.pushSprite(0, 0);
-        xSemaphoreGive(displaySemaphore);
-    }
+    if (!spr.getBuffer()) return;
+    pageHeader("Volume", "Turn to adjust your listening level");
+    spr.fillRoundRect(16,64,tft.width()-32,135,18,C_CARD);
+    spr.setTextDatum(MC_DATUM); spr.setTextColor(C_TEXT);
+    spr.drawString(String(currentVolLevel),tft.width()/2,111,6);
+    spr.setTextColor(C_MUTED); spr.drawString("out of 100",tft.width()/2,145,1);
+    spr.fillRoundRect(36,172,tft.width()-72,7,3,C_BG);
+    const int fill=(tft.width()-72)*currentVolLevel/100;
+    if(fill) spr.fillRect(36,172,fill,7,C_BAR_FG);
+    footer(userSettings.saveFailed?"Save failed - try again":"Press or wait to return"); present(true);
 }
 
-// ----------------------------------------------------
-// โหลดและจัดเรียงรายชื่อเพลง (A-Z)
-// ----------------------------------------------------
 void DisplayManager::loadMusicList() {
     playlistNames.clear();
     playlistPaths.clear();
@@ -441,60 +297,31 @@ void DisplayManager::loadMusicList() {
 // ----------------------------------------------------
 // วาดหน้าจอ Music List
 // ----------------------------------------------------
-void DisplayManager::drawMusicList(bool pushToScreen) {
-    if(spr.getBuffer() == nullptr) return;
-    spr.fillSprite(C_BG);
-
-    spr.setTextColor(C_TEXT);
-    spr.setTextDatum(TL_DATUM);
-    spr.drawString("Playlist (SD Card)", 10, 10, 2);
-
-    int startY = 35;
-    int itemH = 32;
-    int maxVisible = 6;
-
-    if (playlistNames.empty()) {
-        spr.setTextDatum(MC_DATUM);
-        spr.drawString("No Music Found", tft.width()/2, tft.height()/2, 2);
-    } else {
-        // ระบบเลื่อนจอ (Scroll)
-        if(playlistSelectedIndex < playlistScrollOffset) playlistScrollOffset = playlistSelectedIndex;
-        if(playlistSelectedIndex >= playlistScrollOffset + maxVisible) playlistScrollOffset = playlistSelectedIndex - maxVisible + 1;
-
-        for(int i = 0; i < maxVisible; i++) {
-            int idx = playlistScrollOffset + i;
-            if(idx >= (int)playlistNames.size()) break;
-
-            int y = startY + (i * itemH);
-
-            // Hover Effect
-            if(idx == playlistSelectedIndex) {
-                spr.fillRoundRect(5, y, tft.width() - 10, itemH - 2, 4, C_HILITE);
-                spr.setTextColor(C_BG);
-            } else {
-                spr.setTextColor(C_TEXT);
-            }
-
-            // ตัดชื่อเพลงถ้ามันยาวเกินไป
-            String displayName = playlistNames[idx];
-            if(displayName.length() > 25) displayName = displayName.substring(0, 22) + "...";
-
-            spr.setTextDatum(ML_DATUM);
-            spr.drawString(displayName, 15, y + (itemH/2), 2);
+void DisplayManager::mediaList(const char* title, const std::vector<String>& names, int& selected, int& scroll, bool push) {
+    if (!spr.getBuffer()) return;
+    pageHeader(title, String(names.size())+" items  /  SD card");
+    selected=preferences::clamp(selected,0,names.empty()?0:static_cast<int>(names.size()-1));
+    const int visible=5, itemH=32;
+    if(selected<scroll) scroll=selected;
+    if(selected>=scroll+visible) scroll=selected-visible+1;
+    if(names.empty()) { spr.setTextDatum(MC_DATUM); spr.setTextColor(C_MUTED); spr.drawString("Nothing here yet",tft.width()/2,125,2); }
+    for(int row=0;row<visible && scroll+row<static_cast<int>(names.size());++row) {
+        int i=scroll+row,y=54+row*itemH;
+        spr.fillRoundRect(16,y,tft.width()-32,itemH-3,8,i==selected?C_HILITE:C_CARD);
+        spr.setTextColor(i==selected?C_SELECT_TEXT:C_TEXT); spr.setTextDatum(ML_DATUM);
+        String name=names[i];
+        spr.setTextFont(2);
+        while(name.length() && spr.textWidth(name)>tft.width()-66) {
+            int end=name.length()-1;
+            while(end>0 && (static_cast<unsigned char>(name[end])&0xc0)==0x80) --end;
+            name.remove(end);
         }
+        spr.drawString(name,27,y+14,2); spr.setTextFont(1);
     }
-
-    if (pushToScreen) {
-        if(xSemaphoreTake(displaySemaphore, portMAX_DELAY) == pdTRUE) {
-            spr.pushSprite(0, 0);
-            xSemaphoreGive(displaySemaphore);
-        }
-    }
+    footer("Turn to browse  /  Press to open  /  Back"); present(push);
 }
+void DisplayManager::drawMusicList(bool pushToScreen) { mediaList("Tracks",playlistNames,playlistSelectedIndex,playlistScrollOffset,pushToScreen); }
 
-// ----------------------------------------------------
-// โหลดและจัดเรียงรายชื่อรูปภาพ/GIF (A-Z)
-// ----------------------------------------------------
 void DisplayManager::loadImageList() {
     imageNames.clear();
     imagePaths.clear();
@@ -535,119 +362,88 @@ void DisplayManager::loadImageList() {
 // ----------------------------------------------------
 // วาดหน้าจอ Image List
 // ----------------------------------------------------
-void DisplayManager::drawImageList(bool pushToScreen) {
-    if(spr.getBuffer() == nullptr) return;
-    spr.fillSprite(C_BG);
+void DisplayManager::drawImageList(bool pushToScreen) { mediaList("Pictures",imageNames,imageSelectedIndex,imageScrollOffset,pushToScreen); }
 
-    spr.setTextColor(C_TEXT);
-    spr.setTextDatum(TL_DATUM);
-    spr.drawString("Pictures List", 10, 10, 2);
-
-    int startY = 35;
-    int itemH = 32;
-    int maxVisible = 6;
-
-    if (imageNames.empty()) {
-        spr.setTextDatum(MC_DATUM);
-        spr.drawString("No Images Found", tft.width()/2, tft.height()/2, 2);
-    } else {
-        // ระบบเลื่อนจอ (Scroll)
-        if(imageSelectedIndex < imageScrollOffset) imageScrollOffset = imageSelectedIndex;
-        if(imageSelectedIndex >= imageScrollOffset + maxVisible) imageScrollOffset = imageSelectedIndex - maxVisible + 1;
-
-        for(int i = 0; i < maxVisible; i++) {
-            int idx = imageScrollOffset + i;
-            if(idx >= (int)imageNames.size()) break;
-
-            int y = startY + (i * itemH);
-
-            // Hover Effect
-            if(idx == imageSelectedIndex) {
-                spr.fillRoundRect(5, y, tft.width() - 10, itemH - 2, 4, C_HILITE);
-                spr.setTextColor(C_BG);
-            } else {
-                spr.setTextColor(C_TEXT);
-            }
-
-            String displayName = imageNames[idx];
-            if(displayName.length() > 25) displayName = displayName.substring(0, 22) + "...";
-
-            spr.setTextDatum(ML_DATUM);
-            spr.drawString(displayName, 15, y + (itemH/2), 2);
-        }
-    }
-
-    if (pushToScreen) {
-        if(xSemaphoreTake(displaySemaphore, portMAX_DELAY) == pdTRUE) {
-            spr.pushSprite(0, 0);
-            xSemaphoreGive(displaySemaphore);
-        }
+int DisplayManager::settingsCount() const {
+    switch(settingsPage) {
+        case ui::SettingsPage::Root:return 4; case ui::SettingsPage::Display:return 7;
+        case ui::SettingsPage::Network:return 2; case ui::SettingsPage::Sound:return 4;
+        default:return 1;
     }
 }
-
-// ----------------------------------------------------
-// วาดหน้าจอ Settings (Admin Mode & Wi-Fi)
-// ----------------------------------------------------
 void DisplayManager::drawSettings(bool pushToScreen) {
-    if(spr.getBuffer() == nullptr) return;
-    spr.fillSprite(C_BG);
-
-    spr.setTextColor(C_TEXT);
-    spr.setTextDatum(TL_DATUM);
-    spr.drawString("Settings", 10, 10, 2);
-
-    // รายการเมนูและสถานะ
-    String items[boundaries_setting] = {"Admin Mode", "WiFi"};
-    bool states[boundaries_setting] = {isAdminModeOn, isWiFiOn};
-
-    int startY = 45;
-    int itemH = 40;
-
-    for (int i = 0; i < 2; i++) {
-        int y = startY + (i * itemH);
-
-        // 1. วาด Hover Effect
-        if (i == settingSelectedIndex) {
-            spr.fillRoundRect(5, y, tft.width() - 10, itemH - 2, 4, C_HILITE);
-            spr.setTextColor(C_BG);
+    if (!spr.getBuffer()) return;
+    using Page=ui::SettingsPage;
+    const char* titles[]={"Settings","Display settings","Network settings","Music & Sound","Voice Assistant"};
+    const char* root[]={"Display","Network","Music & Sound","Voice Assistant"};
+    const char* display[]={"Background","Cards & panels","Text","Accent","Secondary text","Selection","Reset palette"};
+    const char* sound[]={"Auto-next","Shuffle","Volume step","Volume"};
+    const char* network[]={"Wi-Fi","Admin access point"};
+    const auto& v=userSettings.values;
+    String subtitle="Make it feel like you";
+    if(settingsPage==Page::Network) subtitle=networkSettingsBusy()?"Applying network settings...":WiFi.status()==WL_CONNECTED?"Wi-Fi connected":"Wi-Fi disconnected";
+    if(settingsPage==Page::Voice) subtitle="On-device voice commands";
+    pageHeader(titles[static_cast<int>(settingsPage)],subtitle);
+    const int count=settingsCount(), visible=5;
+    if(settingSelectedIndex<settingsScroll) settingsScroll=settingSelectedIndex;
+    if(settingSelectedIndex>=settingsScroll+visible) settingsScroll=settingSelectedIndex-visible+1;
+    for(int row=0;row<visible && row+settingsScroll<count;++row) {
+        int i=row+settingsScroll,y=54+row*32;
+        bool selected=i==settingSelectedIndex;
+        spr.fillRoundRect(16,y,tft.width()-32,29,8,selected?C_HILITE:C_CARD);
+        spr.setTextColor(selected?C_SELECT_TEXT:C_TEXT); spr.setTextDatum(ML_DATUM);
+        const char* label=settingsPage==Page::Root?root[i]:settingsPage==Page::Display?display[i]:
+                          settingsPage==Page::Network?network[i]:settingsPage==Page::Sound?sound[i]:"Voice recognition";
+        spr.drawString(label,27,y+14,2);
+        bool isToggle=settingsPage==Page::Network || settingsPage==Page::Voice || (settingsPage==Page::Sound && i<2);
+        if(isToggle) {
+            bool enabled=settingsPage==Page::Network?(i==0?v.wifi:v.admin):settingsPage==Page::Voice?v.voice:(i==0?v.autoNext:v.shuffle);
+            toggle(tft.width()-69,y+3,enabled);
+        } else if(settingsPage==Page::Display && i<6) {
+            spr.fillCircle(tft.width()-43,y+14,9,preferences::rgb565(preferences::rgb(v.colors[i])));
+            spr.drawCircle(tft.width()-43,y+14,10,C_MUTED);
         } else {
-            spr.setTextColor(C_TEXT);
-        }
-
-        // ชื่อรายการ
-        spr.setTextDatum(ML_DATUM);
-        spr.drawString(items[i], 15, y + (itemH/2), 2);
-
-        // 2. วาดปุ่ม Toggle (สวิตช์)
-        int toggleW = 40;
-        int toggleH = 20;
-        int toggleX = tft.width() - toggleW - 15; // ชิดขวา
-        int toggleY = y + (itemH/2) - (toggleH/2);
-
-        if (states[i]) {
-            // สถานะ ON (เปิด): พื้นหลังสีฟ้า/เขียว, วงกลมอยู่ขวา
-            spr.fillRoundRect(toggleX, toggleY, toggleW, toggleH, toggleH/2, C_BAR_FG);
-            spr.fillCircle(toggleX + toggleW - (toggleH/2), toggleY + (toggleH/2), (toggleH/2) - 2, C_BG);
-        } else {
-            // สถานะ OFF (ปิด): พื้นหลังสีเทา, วงกลมอยู่ซ้าย
-            spr.fillRoundRect(toggleX, toggleY, toggleW, toggleH, toggleH/2, C_BAR_BG);
-            spr.fillCircle(toggleX + (toggleH/2), toggleY + (toggleH/2), (toggleH/2) - 2, C_BG);
+            String value=">";
+            if(settingsPage==Page::Sound) value=String(i==2?v.volumeStep:v.volume);
+            spr.setTextDatum(MR_DATUM); spr.drawString(value,tft.width()-28,y+14,2);
         }
     }
-
-    if (pushToScreen) {
-        if(xSemaphoreTake(displaySemaphore, portMAX_DELAY) == pdTRUE) {
-            spr.pushSprite(0, 0);
-            xSemaphoreGive(displaySemaphore);
-        }
+    footer(userSettings.saveFailed?"Save failed - press to retry":"Turn to select  /  Press to change  /  Back"); present(pushToScreen);
+}
+void DisplayManager::drawColorPicker(bool pushToScreen) {
+    if (!spr.getBuffer()) return;
+    static const char* labels[]={"Background","Cards & panels","Text","Accent","Secondary text","Selection"};
+    const auto color=userSettings.values.colors[colorRole];
+    pageHeader(labels[colorRole],"Preview your color before saving");
+    const int cx=94,cy=132,radius=67;
+    for(int y=-radius;y<=radius;++y) for(int x=-radius;x<=radius;++x) {
+        const float distance=sqrtf(static_cast<float>(x*x+y*y));
+        if(distance>radius) continue;
+        float angle=atan2f(static_cast<float>(y),static_cast<float>(x))*180.0f/3.14159265f;
+        if(angle<0) angle+=360;
+        preferences::HSV pixel{static_cast<uint16_t>(angle),static_cast<uint8_t>(distance*100/radius),color.value};
+        spr.drawPixel(cx+x,cy+y,preferences::rgb565(preferences::rgb(pixel)));
     }
+    const float angle=color.hue*3.14159265f/180;
+    int px=cx+cosf(angle)*radius*color.saturation/100,py=cy+sinf(angle)*radius*color.saturation/100;
+    spr.drawCircle(px,py,5,TFT_BLACK); spr.drawCircle(px,py,6,TFT_WHITE);
+    const char* components[]={"Hue","Saturation","Brightness"};
+    int values[]={color.hue,color.saturation,color.value};
+    for(int i=0;i<3;++i) {
+        int y=72+i*42;
+        spr.fillRoundRect(178,y,tft.width()-194,34,9,i==colorPhase?C_HILITE:C_CARD);
+        spr.setTextColor(i==colorPhase?C_SELECT_TEXT:C_TEXT); spr.setTextDatum(TL_DATUM);
+        spr.drawString(components[i],186,y+4,1);
+        spr.drawString(String(values[i])+(i==0?" deg":"%"),186,y+16,1);
+    }
+    footer(colorPhase==2?"Turn to adjust / Press save / Back cancel":"Turn to adjust / Press next / Back cancel"); present(pushToScreen);
 }
 
 void DisplayManager::drawAIPet(bool pushToScreen) {
     if(spr.getBuffer() == nullptr) return;
 
     // พื้นหลังดำสนิท
-    spr.fillSprite(TFT_BLACK);
+    spr.fillSprite(C_BG);
 
     // ตัวแปรสถานะแอนิเมชัน
     static float cur_r = 255, cur_g = 255, cur_b = 255;
@@ -749,8 +545,8 @@ void DisplayManager::drawAIPet(bool pushToScreen) {
     cur_gazeY += (tar_gazeY - cur_gazeY) * gazeSpeed;
 
     // --- เริ่มการวาด ---
-    uint16_t faceColor = tft.color565((int)cur_r, (int)cur_g, (int)cur_b);
-    uint16_t blushColor = tft.color565(180, 70, 100);
+    uint16_t faceColor = C_TEXT;
+    uint16_t blushColor = C_BAR_FG;
 
     int faceX = anchorX + cur_gazeX;
     int faceY = anchorY + cur_gazeY;
@@ -776,19 +572,19 @@ void DisplayManager::drawAIPet(bool pushToScreen) {
 
     // 2. วาด "เปลือกตาสีดำ" ทับส่วนบน
     if (cur_eyelidDrop > 1.0) {
-        spr.fillRect(eyeL_X, eyeL_Y - 2, cur_eyeW, cur_eyelidDrop + 2, TFT_BLACK);
-        spr.fillRect(eyeR_X, eyeR_Y - 2, cur_eyeW, cur_eyelidDrop + 2, TFT_BLACK);
+        spr.fillRect(eyeL_X, eyeL_Y - 2, cur_eyeW, cur_eyelidDrop + 2, C_BG);
+        spr.fillRect(eyeR_X, eyeR_Y - 2, cur_eyeW, cur_eyelidDrop + 2, C_BG);
     }
 
     if (cur_angryBrow > 1.0) {
         // ตาซ้าย (มุมตัดเฉียงลงไปทางขวา \)
         spr.fillTriangle(eyeL_X - 10, eyeL_Y - 10,
                          eyeL_X + cur_eyeW + 10, eyeL_Y - 10,
-                         eyeL_X + cur_eyeW + 10, eyeL_Y + cur_angryBrow, TFT_BLACK);
+                         eyeL_X + cur_eyeW + 10, eyeL_Y + cur_angryBrow, C_BG);
         // ตาขวา (มุมตัดเฉียงลงไปทางซ้าย /)
         spr.fillTriangle(eyeR_X - 10, eyeR_Y - 10,
                          eyeR_X + cur_eyeW + 10, eyeR_Y - 10,
-                         eyeR_X - 10, eyeR_Y + cur_angryBrow, TFT_BLACK);
+                         eyeR_X - 10, eyeR_Y + cur_angryBrow, C_BG);
     }
 
     // วาดปาก
@@ -803,10 +599,11 @@ void DisplayManager::drawAIPet(bool pushToScreen) {
         // ปากโค้งยิ้ม
         spr.fillEllipse(pMouthX, pMouthY, cur_mouthW/2, cur_mouthH/2, faceColor);
         if (petMood == 0) {
-            spr.fillRect(pMouthX - cur_mouthW, pMouthY - cur_mouthH, cur_mouthW*2, cur_mouthH, TFT_BLACK);
+            spr.fillRect(pMouthX - cur_mouthW, pMouthY - cur_mouthH, cur_mouthW*2, cur_mouthH, C_BG);
         }
     }
 
+    footer("AI Pet  /  Hold Back for volume  /  Back");
     if (pushToScreen) {
         if(xSemaphoreTake(displaySemaphore, 0) == pdTRUE) {
             spr.pushSprite(0, 0);
@@ -816,187 +613,40 @@ void DisplayManager::drawAIPet(bool pushToScreen) {
 }
 
 void DisplayManager::debug() {
-    if(spr.getBuffer() == nullptr) return;
-
+    if (!spr.getBuffer()) return;
     hwManager.updateAllStatus();
-
-    spr.fillSprite(C_BG);
-    spr.setTextColor(C_TEXT);
-    spr.setTextFont(1);
-    spr.setTextSize(1);
-
-    spr.setTextDatum(TL_DATUM);
-    spr.drawString("HARDWARE DEBUG", 5, 5, 2);
-
-    const uint32_t sramTotal = ESP.getHeapSize();
-    const uint32_t sramFree = ESP.getFreeHeap();
-    const uint32_t psramTotal = psramFound() ? ESP.getPsramSize() : 0;
-    const uint32_t psramFree = psramFound() ? ESP.getFreePsram() : 0;
-    const uint32_t flashTotal = ESP.getFlashChipSize();
-    const uint32_t flashUsed = ESP.getSketchSize();
-    const uint32_t flashFree = flashTotal > flashUsed ? flashTotal - flashUsed : 0;
-
-    char memoryInfo[80];
-    snprintf(memoryInfo, sizeof(memoryInfo), "SRAM %lu/%luKB  PSRAM %lu/%luKB",
-        sramFree / 1024,
-        sramTotal / 1024,
-        psramFree / 1024,
-        psramTotal / 1024);
-    spr.drawString(memoryInfo, 5, 28, 1);
-
-    snprintf(memoryInfo, sizeof(memoryInfo), "FLASH free %luKB  used %luKB",
-        flashFree / 1024,
-        flashUsed / 1024);
-    spr.drawString(memoryInfo, 5, 41, 1);
-    spr.drawLine(5, 56, tft.width() - 5, 56, C_HILITE);
-
-    const int startY = 62;
-    const int itemHeight = 20;
-    const int listBottom = tft.height() - 16;
-    const int devicesPerScreen = max(1, (listBottom - startY) / itemHeight);
-
-    int totalDevices = hwManager.getDeviceCount();
-
-    if (totalDevices > 0) {
-        if (debugSelectedIndex < 0) debugSelectedIndex = 0;
-        if (debugSelectedIndex >= totalDevices) debugSelectedIndex = totalDevices - 1;
-        if (debugSelectedIndex < debugScrollOffset) debugScrollOffset = debugSelectedIndex;
-        if (debugSelectedIndex >= debugScrollOffset + devicesPerScreen) {
-            debugScrollOffset = debugSelectedIndex - devicesPerScreen + 1;
-        }
-
-        int maxScrollOffset = max(0, totalDevices - devicesPerScreen);
-        if (debugScrollOffset > maxScrollOffset) debugScrollOffset = maxScrollOffset;
+    pageHeader("Devices", "Live hardware status");
+    int count=hwManager.getDeviceCount();
+    debugSelectedIndex=preferences::clamp(debugSelectedIndex,0,count?count-1:0);
+    if(debugSelectedIndex<debugScrollOffset) debugScrollOffset=debugSelectedIndex;
+    if(debugSelectedIndex>=debugScrollOffset+4) debugScrollOffset=debugSelectedIndex-3;
+    for(int row=0;row<4 && row+debugScrollOffset<count;++row) {
+        int i=row+debugScrollOffset,y=54+row*34;
+        auto dev=hwManager.getDevice(i);
+        bool selected=i==debugSelectedIndex;
+        spr.fillRoundRect(16,y,tft.width()-32,31,8,selected?C_HILITE:C_CARD);
+        spr.setTextColor(selected?C_SELECT_TEXT:C_TEXT);spr.setTextDatum(TL_DATUM);
+        spr.drawString(dev.name,27,y+4,1);
+        spr.drawString(dev.details.substring(0,42),27,y+18,1);
+        spr.setTextDatum(TR_DATUM);spr.drawString(hwManager.getStatusString(dev.status),tft.width()-28,y+4,1);
     }
-
-    for (int row = 0; row < devicesPerScreen; row++) {
-        int deviceIndex = debugScrollOffset + row;
-        if (deviceIndex >= totalDevices) break;
-
-        HardwareDevice dev = hwManager.getDevice(deviceIndex);
-        int yPos = startY + (row * itemHeight);
-
-        if (deviceIndex == debugSelectedIndex) {
-            spr.fillRoundRect(5, yPos - 2, tft.width() - 10, itemHeight - 2, 4, C_HILITE);
-        }
-
-        uint16_t statusColor;
-        switch (dev.status) {
-            case DEVICE_STATUS::WORKING:
-                statusColor = TFT_GREEN;
-                break;
-            case DEVICE_STATUS::CONNECTING:
-                statusColor = TFT_YELLOW;
-                break;
-            case DEVICE_STATUS::ERROR:
-                statusColor = TFT_RED;
-                break;
-            default:
-                statusColor = C_HILITE;
-        }
-
-        spr.fillCircle(12, yPos + 8, 4, statusColor);
-
-        spr.setTextColor(deviceIndex == debugSelectedIndex ? C_BG : C_TEXT);
-        spr.setTextDatum(TL_DATUM);
-        spr.drawString(dev.name, 25, yPos, 1);
-
-        String statusStr = hwManager.getStatusString(dev.status);
-        spr.setTextDatum(TR_DATUM);
-        spr.setTextColor(statusColor);
-        spr.drawString(statusStr, tft.width() - 5, yPos, 1);
-
-        spr.setTextColor(deviceIndex == debugSelectedIndex ? C_BG : C_HILITE);
-        spr.setTextDatum(TL_DATUM);
-        spr.drawString(dev.details, 25, yPos + 12, 1);
-    }
-
-    spr.setTextColor(C_HILITE);
-    spr.setTextDatum(BC_DATUM);
-    spr.drawString("Back: exit", tft.width() / 2, tft.height() - 3, 1);
-
-    if (xSemaphoreTake(displaySemaphore, portMAX_DELAY) == pdTRUE) {
-        spr.pushSprite(0, 0);
-        xSemaphoreGive(displaySemaphore);
-    }
+    char memory[64];
+    snprintf(memory,sizeof(memory),"RAM free %lu KB  /  PSRAM free %lu KB",
+        static_cast<unsigned long>(ESP.getFreeHeap()/1024),static_cast<unsigned long>(ESP.getFreePsram()/1024));
+    spr.setTextDatum(MC_DATUM);spr.setTextColor(C_MUTED);spr.drawString(memory,tft.width()/2,207,1);
+    footer("Turn for more devices  /  Back to return");present(true);
 }
 
 void DisplayManager::recorde() {
-    if(spr.getBuffer() == nullptr) return;
-
-    spr.fillSprite(C_BG);
-
-    spr.setTextColor(C_TEXT);
-    spr.setTextFont(2);
-    spr.setTextDatum(MC_DATUM);
-    spr.drawString("Voice Recording", tft.width() / 2, 24, 2);
-
-    spr.setTextFont(1);
-    uint16_t statusColor;
-    String statusText;
-
-    if (app::runtime.isRecording) {
-        statusColor = TFT_RED;
-        statusText = "RECORDING";
-    } else {
-        statusColor = TFT_DARKGRAY;
-        statusText = "READY";
-    }
-
-    spr.setTextColor(statusColor);
-    spr.setTextDatum(MC_DATUM);
-    spr.drawString(statusText, tft.width() / 2, 56, 2);
-
-    unsigned long currentMillis = millis();
-    if (currentMillis - previousMillis >= interval) {
-        previousMillis = currentMillis;
-        if (app::runtime.isRecording) {
-            seconds += 1;
-        }
-    }
-
-    spr.setTextColor(C_TEXT);
-    spr.setTextFont(2);
-    char timeStr[16];
-    int mins = seconds / 60;
-    int secs = seconds % 60;
-    snprintf(timeStr, sizeof(timeStr), "%02d:%02d", mins, secs);
-    spr.drawString(timeStr, tft.width() / 2, 94);
-
-    int btnX = tft.width() / 2;
-    int btnY = 153;
-    int btnRadius = 36;
-
-    if (app::runtime.isRecording) {
-        spr.fillRect(btnX - 25, btnY - 25, 50, 50, TFT_RED);
-        spr.drawRect(btnX - 25, btnY - 25, 50, 50, tft.color565(150, 0, 0));
-    } else {
-        spr.fillCircle(btnX, btnY, btnRadius, TFT_GREEN);
-        spr.drawCircle(btnX, btnY, btnRadius, tft.color565(0, 100, 0));
-    }
-
-    spr.setTextColor(TFT_WHITE);
-    spr.setTextFont(1);
-    spr.setTextDatum(MC_DATUM);
-    if (app::runtime.isRecording) {
-        spr.drawString("STOP", btnX, btnY);
-    } else {
-        spr.drawString("REC", btnX, btnY);
-    }
-
-    spr.setTextColor(C_HILITE);
-    spr.setTextFont(1);
-    spr.setTextDatum(MC_DATUM);
-    spr.drawString("Press: record/stop", tft.width() / 2, 214);
-    spr.drawString("Back: exit", tft.width() / 2, 229);
-
-    spr.setTextColor(C_TEXT);
-    char fileInfo[64];
-    snprintf(fileInfo, sizeof(fileInfo), "File: %s", getRecordingName().c_str());
-    spr.drawString(fileInfo, tft.width() / 2, 202);
-
-    if (xSemaphoreTake(displaySemaphore, portMAX_DELAY) == pdTRUE) {
-        spr.pushSprite(0, 0);
-        xSemaphoreGive(displaySemaphore);
-    }
+    if (!spr.getBuffer()) return;
+    const bool active=app::runtime.isRecording;
+    pageHeader("Recorder",active?"Recording your moment":"A new file for every recording");
+    if(millis()-previousMillis>=1000) { previousMillis=millis(); if(active) ++seconds; }
+    spr.fillRoundRect(16,56,tft.width()-32,145,18,C_CARD);
+    char time[24]; snprintf(time,sizeof(time),"%02ld:%02ld",seconds/60,seconds%60);
+    spr.setTextDatum(MC_DATUM); spr.setTextColor(C_TEXT); spr.drawString(time,tft.width()/2,90,6);
+    spr.fillRoundRect(tft.width()/2-57,126,114,38,16,active?C_HILITE:C_BAR_FG);
+    spr.setTextColor(active?C_SELECT_TEXT:C_TEXT); spr.drawString(active?"Stop & save":"Record",tft.width()/2,145,2);
+    spr.setTextColor(C_MUTED); spr.drawString(getRecordingName(),tft.width()/2,183,1);
+    footer("Press to record / stop  /  Back to exit"); present(true);
 }

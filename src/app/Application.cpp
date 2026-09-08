@@ -1,5 +1,6 @@
 // Initializes devices and background tasks, then dispatches application updates.
 #include "Application.hpp"
+#include "../core/UserSettings.hpp"
 #include <Arduino.h>
 #include "../core/Commands.hpp"
 #include "../core/SharedResources.hpp"
@@ -33,6 +34,8 @@ static void initializeSystem() {
         return;
     }
 
+    userSettings.begin();
+    DISM.applyTheme();
     DISM.initDisplay();
     ioManager.initPins();
     file_card.initSDCard();

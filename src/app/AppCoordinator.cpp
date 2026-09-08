@@ -40,9 +40,8 @@ void AppCoordinator::begin() {
     Serial.println("AppCoordinator begin");
     rgbLed.begin();
     aiConversation.begin();
-    DISM.currentState = UI_STATE::APP_PET;
-    startAiPetListening();
-    DISM.drawAIPet();
+    DISM.currentState = UI_STATE::HOME_MENU;
+    DISM.drawHomeMenu();
 }
 
 void AppCoordinator::update() {

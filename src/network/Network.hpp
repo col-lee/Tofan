@@ -47,3 +47,6 @@ void handleWebSocketMessage(AsyncWebSocketClient *client, void *arg, uint8_t *da
 void onWsEvent(AsyncWebSocket *server, AsyncWebSocketClient *client, AwsEventType type, void *arg, uint8_t *data, size_t len);
 
 extern NetworkManager nm;
+
+void requestNetworkSettings(bool wifi, bool admin);
+bool networkSettingsBusy();

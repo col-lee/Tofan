@@ -1,0 +1,24 @@
+{"op":"rect","a":[0,0,320,240,63454]}
+{"op":"text","a":[16,10,4,0,8583],"text":"Display settings"}
+{"op":"text","a":[17,40,1,0,27567],"text":"Make it feel like you"}
+{"op":"round","a":[16,54,288,29,8,46874]}
+{"op":"text","a":[27,68,2,3,6470],"text":"Background"}
+{"op":"ellipse","a":[268,59,18,18,63454]}
+{"op":"ellipse-outline","a":[267,58,20,20,27567]}
+{"op":"round","a":[16,86,288,29,8,57244]}
+{"op":"text","a":[27,100,2,3,8583],"text":"Cards & panels"}
+{"op":"ellipse","a":[268,91,18,18,57244]}
+{"op":"ellipse-outline","a":[267,90,20,20,27567]}
+{"op":"round","a":[16,118,288,29,8,57244]}
+{"op":"text","a":[27,132,2,3,8583],"text":"Text"}
+{"op":"ellipse","a":[268,123,18,18,8583]}
+{"op":"ellipse-outline","a":[267,122,20,20,27567]}
+{"op":"round","a":[16,150,288,29,8,57244]}
+{"op":"text","a":[27,164,2,3,8583],"text":"Accent"}
+{"op":"ellipse","a":[268,155,18,18,36438]}
+{"op":"ellipse-outline","a":[267,154,20,20,27567]}
+{"op":"round","a":[16,182,288,29,8,57244]}
+{"op":"text","a":[27,196,2,3,8583],"text":"Secondary text"}
+{"op":"ellipse","a":[268,187,18,18,27567]}
+{"op":"ellipse-outline","a":[267,186,20,20,27567]}
+{"op":"text","a":[160,230,1,4,27567],"text":"Turn to select  /  Press to change  /  Back"}

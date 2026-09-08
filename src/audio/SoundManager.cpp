@@ -1,6 +1,9 @@
 // Owns speaker playback, I2S capture, WAV recording and local voice inference.
 #include "SoundManager.hpp"
 #include "RecordingPath.hpp"
+#include "PlaybackEvents.hpp"
+#include "../core/UserSettings.hpp"
+#include <atomic>
 #include "../display/DisplayManager.hpp"
 #include "../storage/FileManager.hpp"
 #include "../network/Network.hpp"
@@ -20,7 +23,16 @@ uint32_t totalAudioDuration = 0;
 bool isPlayingAudio = false;
 int currentAudioProgress = 0;
 unsigned long lastProgressUpdate = 0;
-bool autoPlayNext = false;
+static PlaybackEvents playbackEvents;
+static std::atomic<int> requestedVolume{50};
+int consumeStartedTrack() { return playbackEvents.takeStarted(); }
+static std::atomic<bool> voiceAssistantEnabled{false};
+static bool classifierNeedsReset = true;
+void setOutputVolume(int percent) { requestedVolume.store(preferences::clamp(percent,0,100)); }
+void setVoiceAssistantEnabled(bool enabled) { voiceAssistantEnabled.store(enabled); classifierNeedsReset=true; }
+uint32_t consumeFinishedTrack() {
+    return playbackEvents.takeCompleted();
+}
 
 
 /** Audio buffers, pointers and selectors */
@@ -116,7 +128,8 @@ void initAudio(){
   } else {
     Serial.println("install audio failed.");
   }
-  audio.setVolume(50);
+  setOutputVolume(userSettings.values.volume);
+  audio.setVolume(preferences::hardwareVolume(userSettings.values.volume));
 
 
 }
@@ -125,7 +138,7 @@ void initMicrophone() {
     pinMode(LED_PIN, OUTPUT);
     digitalWrite(LED_PIN, LOW);
 
-    run_classifier_init();
+    setVoiceAssistantEnabled(userSettings.values.voice != 0);
     microphoneReady = microphone_inference_start(EI_CLASSIFIER_SLICE_SIZE);
     Serial.println(microphoneReady ? "Microphone ready" : "Microphone initialization failed");
 }
@@ -135,7 +148,11 @@ int16_t readMicData() {
 }
 
 void detectWord() {
-    if (!microphoneReady || app::runtime.isRecordingMode) return;
+    if (!shouldRunRecognition(voiceAssistantEnabled.load(),microphoneReady,app::runtime.isRecordingMode)) {
+        classifierNeedsReset = true;
+        return;
+    }
+    if (classifierNeedsReset) { run_classifier_init(); classifierNeedsReset=false; return; }
 
     bool m = microphone_inference_record();
     if (!m) {
@@ -234,7 +251,8 @@ static void capture_samples(void* arg) {
             sampleBuffer[index] = convertI2SSample(raw32_buffer[index]);
         }
         microphoneLevel = sampleBuffer[sampleCount - 1];
-        audio_inference_callback(sampleCount);
+        if (voiceAssistantEnabled.load()) audio_inference_callback(sampleCount);
+        else { inference.buf_count=0; inference.buf_ready=0; }
     }
 
     microphoneCapturing = false;
@@ -372,7 +390,7 @@ static int i2s_init(uint32_t samplingRate) {
 
 void handleAudio(void *parameter) {
   AUDIO_COMMAND cmd;
-  int volume = 50;
+  int volume = -1;
   enum AudioState {
     STATE_STOPPED,
     STATE_PLAYING,
@@ -383,7 +401,10 @@ void handleAudio(void *parameter) {
   unsigned long lastWsUpdate = 0;
 
   for(;;) {
+    const int level=preferences::hardwareVolume(requestedVolume.load());
+    if (level != volume) { audio.setVolume(level); volume=level; }
     if (xQueueReceive(audio_command, &cmd, 0) == pdPASS) {
+      if (!playbackEvents.beginCommand(cmd.autoAdvanceFrom)) continue;
       if (!cmd.path.valid) { Serial.println("Audio path too long"); continue; }
       const String requestedPath(cmd.path.c_str());
       if (cmd.module == AUDIO_COMMAND::MODULE::AUDIO) {
@@ -421,6 +442,7 @@ void handleAudio(void *parameter) {
             }
             currentState = connected ? STATE_PLAYING : STATE_STOPPED;
             isPlayingAudio = connected;
+            if (connected && cmd.trackIndex >= 0) playbackEvents.markStarted(cmd.trackIndex);
             hasPausedAudio = false;
             if (!connected) currentSongTitle = "Unable to play - retry";
             break;
@@ -481,7 +503,7 @@ void handleAudio(void *parameter) {
       if (isOnlineAudio) currentSongTitle = "Stream ended - retry";
     }
     if(currentState == STATE_STOPPED || currentState == STATE_PAUSED) {
-      vTaskDelay(pdMS_TO_TICKS(500));
+      vTaskDelay(pdMS_TO_TICKS(10));
     } else {
       vTaskDelay(pdMS_TO_TICKS(1));
     }
@@ -512,7 +534,7 @@ void audio_eof_mp3(const char *info){
     Serial.println(info);
 
     // ตั้งแฟล็กเมื่อจบไฟล์; ยังไม่มีตัวอ่านแฟล็กเพื่อเล่นเพลงถัดไป
-    autoPlayNext = true;
+    playbackEvents.complete(!isOnlineAudio && currentFilePath.startsWith("/main/Musics/"));
 }
 
 bool enterRecordingMode() {
@@ -671,3 +693,5 @@ void audio_showstation(const char *info) {
 void audio_showstreamtitle(const char *info) {
     if (info && *info) currentSongTitle = info;
 }
+
+void audio_eof_wav(const char *info) { audio_eof_mp3(info); }

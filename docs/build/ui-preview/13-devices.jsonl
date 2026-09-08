@@ -1,0 +1,21 @@
+{"op":"rect","a":[0,0,320,240,63454]}
+{"op":"text","a":[16,10,4,0,8583],"text":"Devices"}
+{"op":"text","a":[17,40,1,0,27567],"text":"Live hardware status"}
+{"op":"round","a":[16,54,288,31,8,46874]}
+{"op":"text","a":[27,58,1,0,6470],"text":"Speaker"}
+{"op":"text","a":[27,72,1,0,6470],"text":"Ready for playback"}
+{"op":"text","a":[292,58,1,2,6470],"text":"Ready"}
+{"op":"round","a":[16,88,288,31,8,57244]}
+{"op":"text","a":[27,92,1,0,8583],"text":"Speaker"}
+{"op":"text","a":[27,106,1,0,8583],"text":"Ready for playback"}
+{"op":"text","a":[292,92,1,2,8583],"text":"Ready"}
+{"op":"round","a":[16,122,288,31,8,57244]}
+{"op":"text","a":[27,126,1,0,8583],"text":"Speaker"}
+{"op":"text","a":[27,140,1,0,8583],"text":"Ready for playback"}
+{"op":"text","a":[292,126,1,2,8583],"text":"Ready"}
+{"op":"round","a":[16,156,288,31,8,57244]}
+{"op":"text","a":[27,160,1,0,8583],"text":"Speaker"}
+{"op":"text","a":[27,174,1,0,8583],"text":"Ready for playback"}
+{"op":"text","a":[292,160,1,2,8583],"text":"Ready"}
+{"op":"text","a":[160,207,1,4,27567],"text":"RAM free 187 KB  /  PSRAM free 5859 KB"}
+{"op":"text","a":[160,230,1,4,27567],"text":"Turn for more devices  /  Back to return"}

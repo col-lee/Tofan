@@ -1,0 +1,16 @@
+{"op":"rect","a":[0,0,320,240,63454]}
+{"op":"text","a":[16,10,4,0,8583],"text":"Settings"}
+{"op":"text","a":[17,40,1,0,27567],"text":"Make it feel like you"}
+{"op":"round","a":[16,54,288,29,8,46874]}
+{"op":"text","a":[27,68,2,3,6470],"text":"Display"}
+{"op":"text","a":[292,68,2,5,6470],"text":">"}
+{"op":"round","a":[16,86,288,29,8,57244]}
+{"op":"text","a":[27,100,2,3,8583],"text":"Network"}
+{"op":"text","a":[292,100,2,5,8583],"text":">"}
+{"op":"round","a":[16,118,288,29,8,57244]}
+{"op":"text","a":[27,132,2,3,8583],"text":"Music & Sound"}
+{"op":"text","a":[292,132,2,5,8583],"text":">"}
+{"op":"round","a":[16,150,288,29,8,57244]}
+{"op":"text","a":[27,164,2,3,8583],"text":"Voice Assistant"}
+{"op":"text","a":[292,164,2,5,8583],"text":">"}
+{"op":"text","a":[160,230,1,4,27567],"text":"Turn to select  /  Press to change  /  Back"}

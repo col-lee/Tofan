@@ -8,8 +8,11 @@
 #include <AnimatedGIF.h>
 #include <vector>
 #include <atomic>
+#include "../core/UserSettings.hpp"
 
 namespace ui {
+
+enum class SettingsPage { Root, Display, Network, Sound, Voice };
 
 enum class State {
     BOOT_LOADING,
@@ -20,6 +23,7 @@ enum class State {
     APP_MUSIC,
     APP_MUSIC_LIST,
     APP_SETTINGS,
+    APP_COLOR_PICKER,
     GLOBAL_VOLUME,
     POPUP_NO_MUSIC,
     APP_ONLINE_MUSIC,
@@ -39,12 +43,12 @@ using UI_STATE = ui::State;
 class DisplayManager {
 private:
 
-    const uint16_t C_BG = tft.color565(245, 245, 250);     // ขาวอมเทา
-    const uint16_t C_TEXT = tft.color565(40, 40, 45);      // เทาเข้ม
-    const uint16_t C_CARD = tft.color565(230, 230, 235);   // เทาอ่อน
-    const uint16_t C_HILITE = tft.color565(80, 80, 90);    // สีตอน Hover
-    const uint16_t C_BAR_BG = tft.color565(200, 200, 200); // พื้นหลังหลอด
-    const uint16_t C_BAR_FG = tft.color565(100, 150, 255); // ฟ้ามินิมอล
+    uint16_t C_BG, C_TEXT, C_CARD, C_HILITE, C_BAR_BG, C_BAR_FG, C_MUTED, C_SELECT_TEXT;
+    void pageHeader(const String& title, const String& subtitle = "");
+    void footer(const String& text);
+    void present(bool push);
+    void toggle(int x, int y, bool on);
+    void mediaList(const char* title, const std::vector<String>& names, int& selected, int& scroll, bool push);
 
 public:
     std::atomic<bool> mediaClearComplete{true};
@@ -64,6 +68,10 @@ public:
     int popupSelectedIndex = 0;
 
     // ตัวแปรสำหรับหน้า Settings
+    ui::SettingsPage settingsPage = ui::SettingsPage::Root;
+    int settingsScroll = 0;
+    int colorRole = 0, colorPhase = 0;
+    preferences::HSV colorBackup{};
     int settingSelectedIndex = 0; // 0 = Admin Mode, 1 = Wi-Fi
     int boundaries_setting = 2;
     bool isAdminModeOn = false;
@@ -111,6 +119,9 @@ public:
     ~DisplayManager();
 
     void initDisplay();
+    void applyTheme();
+    int settingsCount() const;
+    void drawColorPicker(bool pushToScreen = true);
     void resetDisplay();
     void createUISprite();
     void deleteUISprite();

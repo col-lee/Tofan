@@ -1,0 +1,9 @@
+{"op":"rect","a":[0,0,320,240,63454]}
+{"op":"text","a":[16,10,4,0,8583],"text":"Recorder"}
+{"op":"text","a":[17,40,1,0,27567],"text":"A new file for every recording"}
+{"op":"round","a":[16,56,288,145,18,57244]}
+{"op":"text","a":[160,90,6,4,8583],"text":"00:00"}
+{"op":"round","a":[103,126,114,38,16,36438]}
+{"op":"text","a":[160,145,2,4,8583],"text":"Record"}
+{"op":"text","a":[160,183,1,4,27567],"text":"voice_record_000012.wav"}
+{"op":"text","a":[160,230,1,4,27567],"text":"Press to record / stop  /  Back to exit"}

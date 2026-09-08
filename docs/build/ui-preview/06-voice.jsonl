@@ -1,0 +1,8 @@
+{"op":"rect","a":[0,0,320,240,63454]}
+{"op":"text","a":[16,10,4,0,8583],"text":"Voice Assistant"}
+{"op":"text","a":[17,40,1,0,27567],"text":"On-device voice commands"}
+{"op":"round","a":[16,54,288,29,8,46874]}
+{"op":"text","a":[27,68,2,3,6470],"text":"Voice recognition"}
+{"op":"round","a":[251,57,42,22,11,27567]}
+{"op":"ellipse","a":[254,60,16,16,63454]}
+{"op":"text","a":[160,230,1,4,27567],"text":"Turn to select  /  Press to change  /  Back"}
