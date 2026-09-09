@@ -1,5 +1,6 @@
 // Initializes devices and background tasks, then dispatches application updates.
 #include "Application.hpp"
+#include "../network/WebPortal.hpp"
 #include "../core/UserSettings.hpp"
 #include <Arduino.h>
 #include "../core/Commands.hpp"
@@ -81,6 +82,8 @@ void app::begin() {
 }
 
 void app::update() {
+    serviceWebPortal();
+    if (webFirmwareUpdating()) { delay(1); return; }
     appCoordinator.update();
     inputController.update();
 }

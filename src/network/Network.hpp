@@ -13,8 +13,8 @@
 #include <Update.h>
 
 typedef struct {
-    char ssid[32] = "";
-    char password[32] = "";
+    char ssid[33] = "";
+    char password[65] = "";
 } PrefsObj_WiFiManager; // Stored Wi-Fi credential buffers.
 
 extern AsyncWebServer server;
@@ -50,3 +50,4 @@ extern NetworkManager nm;
 
 void requestNetworkSettings(bool wifi, bool admin);
 bool networkSettingsBusy();
+void requestWiFiReconnect();

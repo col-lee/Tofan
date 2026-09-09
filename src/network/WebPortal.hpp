@@ -2,3 +2,4 @@
 #include <ESPAsyncWebServer.h>
 void registerWebPortal(AsyncWebServer& server);
 void serviceWebPortal();
+bool webFirmwareUpdating();

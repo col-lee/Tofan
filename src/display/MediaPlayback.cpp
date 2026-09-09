@@ -1,6 +1,7 @@
 // Decodes JPEG/GIF files and services the display command queue.
 #include "DisplayManager.hpp"
 #include "JpegDimensions.hpp"
+#include "VideoPlayback.hpp"
 #include "../storage/FileManager.hpp"
 
 AnimatedGIF gif;
@@ -194,12 +195,12 @@ void DisplayManager::stopGif() {
 // Receive display commands and advance GIF frames while playback is active.
 void handleDisplay(void *pvParameters) {
     DISPLAY_COMMAND cmd;
-    enum class STATE { IDLE, SHOW, CLEAR, PLAYING_GIF } state = STATE::IDLE;
+    enum class STATE { IDLE, SHOW, CLEAR, PLAYING_GIF, PLAYING_VIDEO } state = STATE::IDLE;
     String lastPath = "";
 
     for (;;) {
         // ไม่ Block คิวเวลาเล่น GIF ทำให้เฟรมเรตไม่ตก
-        TickType_t waitTime = (state == STATE::PLAYING_GIF) ? pdMS_TO_TICKS(5) : pdMS_TO_TICKS(50);
+        TickType_t waitTime = (state == STATE::PLAYING_GIF || state == STATE::PLAYING_VIDEO) ? pdMS_TO_TICKS(5) : pdMS_TO_TICKS(50);
 
         if(xQueueReceive(display_command, &cmd, waitTime) == pdPASS) {
             if(cmd.module == DISPLAY_COMMAND::MODULE::DIS) {
@@ -208,12 +209,14 @@ void handleDisplay(void *pvParameters) {
                     if (!cmd.path.valid) { Serial.println("Image path too long"); continue; }
                     lastPath = cmd.path.c_str();
                     if(state == STATE::PLAYING_GIF) DISM.stopGif();
+                    if(state == STATE::PLAYING_VIDEO) closeVideo();
                     state = STATE::SHOW;
                     Serial.println("SHOW OK. Path: " + lastPath);
                 }
 
                 if(cmd.display_state == DISPLAY_COMMAND::DISPLAY_STATE::CLEAR) {
                     if(state == STATE::PLAYING_GIF) DISM.stopGif();
+                    if(state == STATE::PLAYING_VIDEO) closeVideo();
                     state = STATE::CLEAR;
                     Serial.println("CLEAR OK.");
                 }
@@ -230,6 +233,20 @@ void handleDisplay(void *pvParameters) {
                 if (pathLower.endsWith(".jpg") || pathLower.endsWith(".jpeg")) {
                     DISM.drawJpeg(lastPath.c_str());
                     state = STATE::IDLE;
+                } else if(pathLower.endsWith(".png")) {
+                    if (xSemaphoreTake(sdSemaphore,pdMS_TO_TICKS(1000)) == pdTRUE) {
+                        if (xSemaphoreTake(displaySemaphore,pdMS_TO_TICKS(1000)) == pdTRUE) {
+                            tft.fillScreen(TFT_BLACK);
+                            if (!tft.drawPngFile(SD,lastPath.c_str(),tft.width()/2,tft.height()/2,0,0,0,0,1.0f,1.0f,lgfx::datum_t::middle_center)) {
+                                tft.setTextColor(TFT_WHITE); tft.drawString("Unable to open PNG",10,20,2);
+                            }
+                            xSemaphoreGive(displaySemaphore);
+                        }
+                        xSemaphoreGive(sdSemaphore);
+                    }
+                    state = STATE::IDLE;
+                } else if(pathLower.endsWith(".mjpeg") || pathLower.endsWith(".mjpg")){
+                    state=openVideo(lastPath)?STATE::PLAYING_VIDEO:STATE::IDLE;
                 } else if(pathLower.endsWith(".gif")){
                     if(DISM.openGif(lastPath.c_str())) {
                         Serial.println("openedd.");
@@ -243,6 +260,11 @@ void handleDisplay(void *pvParameters) {
             } else {
                 state = STATE::IDLE;
             }
+            break;
+
+        case STATE::PLAYING_VIDEO:
+            if(!advanceVideo())state=STATE::IDLE;
+            vTaskDelay(pdMS_TO_TICKS(1));
             break;
 
         case STATE::PLAYING_GIF:

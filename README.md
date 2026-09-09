@@ -4,7 +4,7 @@
 
 ## ความสามารถปัจจุบัน
 
-- ดูภาพ JPEG และ GIF จาก `/main/Pictures` บน SD card
+- ดูภาพ JPEG/PNG/GIF จาก `/main/Pictures` และเล่นวิดีโอ raw MJPEG (`.mjpeg/.mjpg`) จาก `/main/Videos` บน SD card
 - เล่นเพลงจาก `/main/Musics` และสถานีออนไลน์ที่กำหนดในโค้ด
 - บันทึกเสียง WAV mono 16-bit โดย header ระบุ 16 kHz ไปที่ `/main/Musics/voice_record.wav`
 - จำแนกคำสั่งเสียงเปิด/ปิดไฟด้วยโมเดล Edge Impulse ในเครื่อง เมื่อไม่ได้อยู่ในโหมดบันทึก
@@ -48,3 +48,18 @@ SD card เก็บสื่อและเว็บแอดมิน โด�
 - [สัญญาการเชื่อมต่อ AI backend](docs/architecture/AI_ARCHITECTURE.md)
 - [ตั้งค่า AI ภาษาไทย](docs/guides/AI_SETUP_GUIDE_TH.md)
 - [ผลตรวจและข้อจำกัดปัจจุบัน](docs/reviews/README_REVIEW_SUMMARY.md)
+
+## การเล่นวิดีโอบน TFT (MJPEG)
+
+ToFan สามารถเล่นไฟล์ **raw Motion-JPEG** จาก SD card ได้โดยแยก JPEG ทีละเฟรมแล้วส่งเข้า LovyanGFX `drawJpg()` โดยใช้ PSRAM เป็น frame buffer
+
+- รองรับ `.mjpeg` และ `.mjpg`
+- ไฟล์ต้องเป็น raw MJPEG (JPEG ต่อกันหลายเฟรม) ไม่ใช่ MP4/AVI/WebM
+- JPEG ควรเป็น Baseline JPEG
+- แนะนำ 320x240 @ 12 FPS สำหรับจอปัจจุบัน (panel 240x320 หมุนเป็น 320x240)
+- จำกัดขนาดภาพต่อเฟรมไม่เกิน 640x480
+- เก็บไว้ที่ `/main/Videos/`
+
+การใช้งาน: **Home -> Media -> เลือกไฟล์ `.mjpeg/.mjpg` -> กด encoder** และกด Back เพื่อหยุดวิดีโอและกลับรายการสื่อ
+
+ดูรายละเอียดและคำสั่ง FFmpeg ที่ [docs/guides/VIDEO_PLAYBACK.md](docs/guides/VIDEO_PLAYBACK.md)

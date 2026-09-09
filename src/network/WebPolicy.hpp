@@ -18,4 +18,7 @@ inline bool imageHeader(const uint8_t* bytes, size_t n) {
     return n >= 24 && bytes[0] == 0xe9 && bytes[1] > 0 && bytes[1] <= 16 && bytes[12] == 9 && bytes[13] == 0;
 }
 inline bool firmwareSize(size_t n, size_t partition) { return n >= 24 && n <= partition; }
+inline bool uploadChunkValid(size_t expected,size_t received,size_t index,size_t length,bool finished) {
+    return !finished && received<=expected && index==received && length<=expected-received;
+}
 }

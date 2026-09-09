@@ -111,7 +111,7 @@ void DisplayManager::drawLoading(int percent, String text) {
 void DisplayManager::drawHomeMenu(bool pushToScreen) {
     if (!spr.getBuffer()) return;
     pageHeader("Home", "Your music, moments and little assistant");
-    const char* labels[]={"Pictures","Music","Settings","AI Pet","Devices","Recorder"};
+    const char* labels[]={"Media","Music","Settings","AI Pet","Devices","Recorder"};
     const int cw=(tft.width()-44)/2;
     for(int i=0;i<6;++i) {
         int x=16+(i%2)*(cw+12),y=56+(i/2)*52;
@@ -328,7 +328,8 @@ void DisplayManager::loadImageList() {
     imageSelectedIndex = 0;
     imageScrollOffset = 0;
 
-    String jsonStr = file_card.getFileListJSON("/main/Pictures");
+    for (const char* directory : {"/main/Pictures", "/main/Videos"}) {
+    String jsonStr = file_card.getFileListJSON(directory);
     JsonDocument doc;
     DeserializationError error = deserializeJson(doc, jsonStr);
 
@@ -340,10 +341,10 @@ void DisplayManager::loadImageList() {
             String lowerName = name;
             lowerName.toLowerCase();
 
-            // คัดเฉพาะไฟล์ภาพ
-            if (!isDir && (lowerName.endsWith(".jpg") || lowerName.endsWith(".jpeg") || lowerName.endsWith(".gif"))) {
+            // คัดเฉพาะไฟล์ภาพและวิดีโอที่จอรองรับ
+            if (!isDir && (lowerName.endsWith(".jpg") || lowerName.endsWith(".jpeg") || lowerName.endsWith(".gif") || lowerName.endsWith(".png") || lowerName.endsWith(".mjpeg") || lowerName.endsWith(".mjpg"))) {
                 imageNames.push_back(name);
-                imagePaths.push_back("/main/Pictures/" + name);
+                imagePaths.push_back(String(directory) + "/" + name);
             }
         }
 
@@ -358,11 +359,12 @@ void DisplayManager::loadImageList() {
         }
     }
 }
+}
 
 // ----------------------------------------------------
 // วาดหน้าจอ Image List
 // ----------------------------------------------------
-void DisplayManager::drawImageList(bool pushToScreen) { mediaList("Pictures",imageNames,imageSelectedIndex,imageScrollOffset,pushToScreen); }
+void DisplayManager::drawImageList(bool pushToScreen) { mediaList("Photos & Video",imageNames,imageSelectedIndex,imageScrollOffset,pushToScreen); }
 
 int DisplayManager::settingsCount() const {
     switch(settingsPage) {

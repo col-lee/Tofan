@@ -2,6 +2,7 @@
 #include "../src/core/Commands.hpp"
 #include "../src/core/MediaNavigation.hpp"
 #include "../src/display/JpegDimensions.hpp"
+#include "../src/display/MjpegFrame.hpp"
 #include <vector>
 #include <cassert>
 #include <cstdio>
@@ -103,12 +104,71 @@ static void test_jpeg_invalid_lengths() {
     assert(!media::readJpegDimensions(pastEnd,w,h));
     assert(!media::readJpegDimensions(shortFrame,w,h));
 }
+
+static std::vector<unsigned char> baselineFrame(unsigned short width=320, unsigned short height=240) {
+    return {
+        0xff,0xd8,
+        0xff,0xc0,0x00,0x0b,0x08,
+        static_cast<unsigned char>(height >> 8), static_cast<unsigned char>(height & 0xff),
+        static_cast<unsigned char>(width >> 8), static_cast<unsigned char>(width & 0xff),
+        0x01,0x01,0x11,0x00,
+        0xff,0xda,0x00,0x08,0x01,0x01,0x00,0x00,0x3f,0x00,
+        0x11,0x22,0xff,0x00,0x33,
+        0xff,0xd9
+    };
+}
+struct StreamReader {
+    std::vector<unsigned char> bytes;
+    std::size_t offset = 0;
+    explicit StreamReader(std::vector<unsigned char> data) : bytes(std::move(data)) {}
+    int read() { return offset < bytes.size() ? bytes[offset++] : -1; }
+};
+static void test_mjpeg_scans_boundary_and_extracts_frame() {
+    auto jpeg = baselineFrame();
+    std::vector<unsigned char> stream = {'-','-','b','o','u','n','d','a','r','y','\r','\n'};
+    stream.insert(stream.end(), jpeg.begin(), jpeg.end());
+    stream.insert(stream.end(), {'\r','\n','x','x'});
+    StreamReader source(std::move(stream));
+    std::vector<unsigned char> out(1024);
+    std::size_t size = 0;
+    assert(media::readMjpegFrame(source,out.data(),out.size(),size) == media::FrameResult::Frame);
+    assert(size == jpeg.size());
+    assert(out[0] == 0xff && out[1] == 0xd8);
+    assert(out[size-2] == 0xff && out[size-1] == 0xd9);
+}
+static void test_mjpeg_two_consecutive_frames() {
+    auto first = baselineFrame(320,240);
+    auto second = baselineFrame(160,120);
+    std::vector<unsigned char> stream;
+    stream.insert(stream.end(), first.begin(), first.end());
+    stream.insert(stream.end(), {'\r','\n','-','-','x','\r','\n'});
+    stream.insert(stream.end(), second.begin(), second.end());
+    StreamReader source(std::move(stream));
+    std::vector<unsigned char> out(1024);
+    std::size_t size = 0;
+    assert(media::readMjpegFrame(source,out.data(),out.size(),size) == media::FrameResult::Frame);
+    assert(media::readMjpegFrame(source,out.data(),out.size(),size) == media::FrameResult::Frame);
+    Reader dimensionReader({});
+    dimensionReader.bytes.assign(out.begin(), out.begin()+size);
+    uint16_t w=0,h=0;
+    assert(media::readJpegDimensions(dimensionReader,w,h));
+    assert(w == 160 && h == 120);
+}
+static void test_mjpeg_frame_too_large() {
+    auto jpeg = baselineFrame();
+    StreamReader source(std::move(jpeg));
+    unsigned char out[8]{};
+    std::size_t size = 0;
+    assert(media::readMjpegFrame(source,out,sizeof(out),size) == media::FrameResult::TooLarge);
+}
+
 int main() {
     test_empty_list(); test_first_loaded_list(); test_single_item(); test_station_wrap();
     test_display_queue_owns_path(); test_audio_queue_owns_url(); test_path_limits(); test_utf8_path();
     test_jpeg_dimensions(); test_jpeg_metadata_and_progressive();
     test_jpeg_truncated_marker(); test_jpeg_invalid_lengths();
-    std::puts("PASS: 12 media navigation, queue ownership and JPEG parser tests");
+    test_mjpeg_scans_boundary_and_extracts_frame(); test_mjpeg_two_consecutive_frames(); test_mjpeg_frame_too_large();
+    std::puts("PASS: 15 media navigation, queue ownership, JPEG and MJPEG parser tests");
 }
 
 #endif
