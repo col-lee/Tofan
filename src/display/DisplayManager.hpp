@@ -102,6 +102,8 @@ public:
     unsigned long lastMoodChange = 0;
     float petVoiceLevel = 0.0f;
     uint32_t petInteractionCount = 0;
+    int petLookDirection = 0;
+    unsigned long petLookUntil = 0;
 
     // Recording timer variables (used by recorde() function)
     long seconds = 0;

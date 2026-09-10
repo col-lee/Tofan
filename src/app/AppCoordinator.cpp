@@ -204,6 +204,23 @@ void AppCoordinator::updateAiPetBehavior() {
     }
 }
 
+void AppCoordinator::reactToAiPetRotation(int steps) {
+    if (!steps || DISM.currentState != UI_STATE::APP_PET) return;
+    const unsigned long now = millis();
+    const bool quick = DISM.petLookUntil &&
+        static_cast<int32_t>(DISM.petLookUntil - now) > 1380;
+    DISM.petLookDirection = steps > 0 ? 1 : -1;
+    DISM.petLookUntil = now + 1500;
+    ++DISM.petInteractionCount;
+    // Keep cloud processing feedback intact; looking still responds locally.
+    if (!app::runtime.aiPetProcessing) {
+        const bool excited = quick || steps >= 4 || steps <= -4;
+        DISM.setPetMood(excited ? ui::PetMood::Excited : ui::PetMood::Playful,
+                        excited ? "wheee!" : steps > 0 ? "over here?" : "this way?", 1500);
+    }
+    scheduleIdleMood(now);
+}
+
 void AppCoordinator::reactToAiPetTouch() {
     const unsigned long now = millis();
     ++DISM.petInteractionCount;

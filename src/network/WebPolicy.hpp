@@ -3,6 +3,12 @@
 #include <cstdint>
 #include <cstring>
 namespace portal {
+inline bool accountName(const char* value) {
+    size_t n=value?std::strlen(value):0;
+    if(!n||n>31||value[0]==' '||value[n-1]==' ')return false;
+    for(size_t i=0;i<n;i++)if(static_cast<unsigned char>(value[i])<32||value[i]==127)return false;
+    return true;
+}
 constexpr size_t MaxUpload = 256u * 1024 * 1024;
 inline bool filename(const char* s) {
     const size_t n = s ? std::strlen(s) : 0;

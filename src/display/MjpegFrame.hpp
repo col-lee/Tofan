@@ -37,8 +37,11 @@ FrameResult readMjpegFrame(
 
     // Find JPEG SOI marker: FF D8.
     int previous = -1;
+    size_t scanned = 0;
 
     while (true) {
+        // Bound malformed data scanning so Back/display commands stay responsive.
+        if (++scanned > 65536) return FrameResult::Invalid;
         const int value = source.read();
 
         if (value < 0) {

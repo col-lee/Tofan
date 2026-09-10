@@ -484,8 +484,9 @@ void DisplayManager::drawAIPet(bool pushToScreen) {
         int gazeX = 0, gazeY = 0;
         bool xEyes = false, openMouth = false, sweat = false;
         bool sparkles = false, soundWaves = false, thoughtDots = false, notes = false;
-        uint16_t accent = PET_MINT;
+        uint16_t accent = 0;
     } target;
+    target.accent = PET_MINT;
 
     switch (petMood) {
         case ui::PetMood::Happy:
@@ -575,7 +576,9 @@ void DisplayManager::drawAIPet(bool pushToScreen) {
     curMouthW+=(target.mouthW-curMouthW)*lerp; curMouthH+=(target.mouthH-curMouthH)*lerp;
     curMouthY+=(target.mouthY-curMouthY)*lerp; curLid+=(target.eyelid-curLid)*lerp;
     curBrow+=(target.brow-curBrow)*lerp; curBlush+=(target.blush-curBlush)*lerp;
-    curGazeX+=((target.gazeX+randomGazeX)-curGazeX)*.18f;
+    const bool followingWheel = petLookUntil && static_cast<int32_t>(petLookUntil-now)>0;
+    const float gazeX = followingWheel ? petLookDirection*18.0f : target.gazeX+randomGazeX;
+    curGazeX+=(gazeX-curGazeX)*.18f;
     curGazeY+=((target.gazeY+randomGazeY)-curGazeY)*.18f;
 
     spr.fillSprite(PET_BG);
@@ -675,7 +678,7 @@ void DisplayManager::drawAIPet(bool pushToScreen) {
 
     // Small fixed-color footer. Do not call footer(), because footer() uses UI theme colors.
     spr.setTextDatum(MC_DATUM); spr.setTextFont(1); spr.setTextSize(1); spr.setTextColor(PET_MUTED);
-    spr.drawString("Press: pet me  /  Speak: I can hear  /  Back",tft.width()/2,tft.height()-10,1);
+    spr.drawString("Roll: play / Press: pet / Speak / Back",tft.width()/2,tft.height()-10,1);
 
     if(pushToScreen && xSemaphoreTake(displaySemaphore,0)==pdTRUE){
         spr.pushSprite(0,0);

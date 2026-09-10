@@ -220,11 +220,14 @@ void registerWebPortal(AsyncWebServer& server) {
     });
     server.on("/api/logout",AsyncWebRequestMethod::HTTP_POST,[](AsyncWebServerRequest* r){if(!authorized(r,true))return;{Guard g(portalMutex);session="";}reply(r,200,"Signed out",true);});
     server.on("/api/account",AsyncWebRequestMethod::HTTP_POST,[](AsyncWebServerRequest* r){if(!authorized(r,true))return;
-        String old=param(r,"current"),pass=param(r,"password");Guard g(portalMutex);
+        String old=param(r,"current"),pass=param(r,"password"),user=param(r,"username");Guard g(portalMutex);
         if(!g.held||hashPassword(old,salt)!=passwordHash){reply(r,403,"Incorrect current password");return;}
-        if(pass.length()<8||pass.length()>128){reply(r,400,"Password must be 8–128 characters");return;}
-        String s=randomHex(),h=hashPassword(pass,s);bool ok=saveAccount(account,s,h);
-        if(!ok){reply(r,500,"Cannot save password");return;}salt=s;passwordHash=h;session="";reply(r,200,"Password changed; sign in again",true);
+        if(!r->hasParam("username",true))user=account;user.trim();
+        if(!portal::accountName(user.c_str())){reply(r,400,"Username must be 1–31 bytes without control characters");return;}
+        if(pass.length()&&(pass.length()<8||pass.length()>128)){reply(r,400,"New password must be 8–128 characters");return;}
+        String s=pass.length()?randomHex():salt,h=pass.length()?hashPassword(pass,s):passwordHash;
+        if(!saveAccount(user,s,h)){reply(r,500,"Cannot save account");return;}
+        account=user;salt=s;passwordHash=h;session="";reply(r,200,"Account updated; sign in with your new details",true);
     });
     server.on("/api/status",AsyncWebRequestMethod::HTTP_GET,[](AsyncWebServerRequest* r){if(!authorized(r))return;String out;{Guard g(portalMutex);out=snapshot;}auto* response=r->beginResponse(200,"application/json",out);response->addHeader("Cache-Control","no-store");r->send(response);});
     server.on("/api/settings",AsyncWebRequestMethod::HTTP_POST,[](AsyncWebServerRequest* r){if(!authorized(r,true))return;enqueue(r,Command::Settings,param(r,"values"));});
@@ -303,7 +306,7 @@ void serviceWebPortal() {
     auto s=d["settings"].to<JsonObject>();const auto& v=userSettings.values;s["volume"]=v.volume;s["volumeStep"]=v.volumeStep;s["voice"]=v.voice;s["autoNext"]=v.autoNext;s["shuffle"]=v.shuffle;s["wifi"]=v.wifi;s["admin"]=v.admin;
     auto colors=s["colors"].to<JsonArray>();for(auto color:v.colors){auto row=colors.add<JsonArray>();row.add(color.hue);row.add(color.saturation);row.add(color.value);}
     JsonDocument ai;deserializeJson(ai,aiConversation.getConfigJson(false));d["ai"]=ai;
-    String out;{Guard g(portalMutex);d["settingsResult"]=settingsResult;d["settingsRevision"]=settingsRevision;serializeJson(d,out);if(g.held)snapshot=out;}
+    String out;{Guard g(portalMutex);d["username"]=account;d["settingsResult"]=settingsResult;d["settingsRevision"]=settingsRevision;serializeJson(d,out);if(g.held)snapshot=out;}
 }
 
 bool webFirmwareUpdating() { return updating.load() || rebootAt.load()!=0; }

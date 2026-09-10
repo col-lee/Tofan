@@ -59,6 +59,8 @@ void configureEncoder() {
         case UI_STATE::GLOBAL_VOLUME:
             volumeEncoder=0;
             rotaryEncoder.setBoundaries(-2000,2000,false); rotaryEncoder.setEncoderValue(0); return;
+        case UI_STATE::APP_PET:
+            rotaryEncoder.setBoundaries(-2000,2000,false); rotaryEncoder.setEncoderValue(0); return;
         default:break;
     }
     rotaryEncoder.setBoundaries(0,maximum,wrap);
@@ -150,6 +152,10 @@ void InputController::handleInput() {
     if(rotaryEncoder.encoderChanged()) {
         const int value=rotaryEncoder.readEncoder();
         switch(DISM.currentState) {
+            case UI_STATE::APP_PET:
+                appCoordinator.reactToAiPetRotation(value);
+                rotaryEncoder.setEncoderValue(0);
+                break;
             case UI_STATE::HOME_MENU: DISM.currentMenuIndex=value;break;
             case UI_STATE::APP_MUSIC: case UI_STATE::APP_ONLINE_MUSIC: DISM.currentMusicControlIndex=value;break;
             case UI_STATE::APP_MUSIC_LIST: DISM.playlistSelectedIndex=value;break;

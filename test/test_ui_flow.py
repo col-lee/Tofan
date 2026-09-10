@@ -47,7 +47,14 @@ void DisplayManager::loadImageList(){imageNames={"A.jpg","B.jpg","C.gif"};imageP
 const int MAX_STATIONS=3;
 String onlineStations[]={"http://a","http://b","http://c"};
 bool hasPausedAudio=false;
-struct {void startAiPetListening(){}void stopAiPetListening(){}} appCoordinator;
+void scheduleIdleMood(unsigned long){}
+void DisplayManager::setPetMood(ui::PetMood mood,const char*,unsigned long){petMood=mood;}
+struct TestCoordinator {
+ int rolled=0,touches=0;
+ void startAiPetListening(){}void stopAiPetListening(){}
+ void reactToAiPetRotation(int steps);
+ void reactToAiPetTouch(){++touches;}
+} appCoordinator;
 struct {bool keys[7]{};void initPins(){}bool isButtonPressed(int key){return keys[key];}} ioManager;
 class AiEsp32RotaryEncoder {
 public:
@@ -67,6 +74,25 @@ void back(){ioManager.keys[BTN_BACK]=true;tick();ioManager.keys[BTN_BACK]=false;
 void turn(int value){rotaryEncoder.position=value;tick();}
 int main(){
     DISM.applyTheme();DISM.currentState=UI_STATE::HOME_MENU;inputController.begin();
+    turn(3);press();assert(DISM.currentState==UI_STATE::APP_PET);
+    assert(rotaryEncoder.minimum==-2000 && rotaryEncoder.maximum==2000);
+    turn(2);assert(DISM.petLookDirection==1 && rotaryEncoder.position==0 && DISM.petMood==ui::PetMood::Playful);
+    turn(-3);assert(DISM.petLookDirection==-1 && rotaryEncoder.position==0);
+    turn(4);assert(DISM.petMood==ui::PetMood::Excited);
+    simulatedMillis+=50;appCoordinator.reactToAiPetRotation(1);
+    assert(DISM.petMood==ui::PetMood::Excited);
+    auto beforeZero=DISM.petInteractionCount;appCoordinator.reactToAiPetRotation(0);
+    assert(DISM.petInteractionCount==beforeZero);
+    app::runtime.aiPetProcessing=true;DISM.petMood=ui::PetMood::Thinking;
+    turn(-1);assert(DISM.petLookDirection==-1 && DISM.petMood==ui::PetMood::Thinking);
+    app::runtime.aiPetProcessing=false;
+    auto interactions=DISM.petInteractionCount;
+    for(int i=0;i<2100;++i) turn(1);
+    assert(DISM.petInteractionCount==interactions+2100 && rotaryEncoder.position==0);
+    press();assert(appCoordinator.touches==1);back();
+    assert(DISM.currentState==UI_STATE::HOME_MENU && rotaryEncoder.maximum==5);
+    auto beforeHome=DISM.petInteractionCount;appCoordinator.reactToAiPetRotation(1);
+    assert(DISM.petInteractionCount==beforeHome);
     turn(2);press();assert(DISM.settingsPage==Page::Root && rotaryEncoder.maximum==3);
     press();assert(DISM.settingsPage==Page::Display && rotaryEncoder.maximum==6);
     turn(3);press();assert(DISM.currentState==UI_STATE::APP_COLOR_PICKER);
@@ -90,7 +116,10 @@ int main(){
     back();turn(5);press();assert(DISM.currentState==UI_STATE::RECORDE);
     press();assert(app::runtime.isRecording);press();assert(!app::runtime.isRecording);
     back();assert(!app::runtime.isRecordingMode && DISM.currentState==UI_STATE::HOME_MENU);
-    std::puts("PASS: actual controller navigation, color save/cancel, toggles, volume restore, first picture entry and repeated recording");
+    std::puts("PASS: AIpet rotary direction/speed/continuous input/busy state/touch/back, navigation, settings, volume, display and recording");
 }
 '''
-(root/'.pio/ui-flow.cpp').write_text(preview+stubs+controller+tests,encoding='utf-8')
+coordinator=(root/'src/app/AppCoordinator.cpp').read_text(encoding='utf-8')
+rotation=coordinator[coordinator.index('void AppCoordinator::reactToAiPetRotation'):coordinator.index('void AppCoordinator::reactToAiPetTouch')]
+rotation=rotation.replace('AppCoordinator::','TestCoordinator::')
+(root/'.pio/ui-flow.cpp').write_text(preview+stubs+rotation+controller+tests,encoding='utf-8')

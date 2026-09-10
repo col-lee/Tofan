@@ -73,7 +73,7 @@ uint32_t currentAudioTime=83,totalAudioDuration=245;
 const char* onlineStationNames[]={"Radio Paradise","SomaFM Groove Salad","Lofi"};
 struct {int status(){return WL_CONNECTED;}} WiFi;
 bool networkSettingsBusy(){return false;}
-namespace app {struct {bool isRecording=false;bool isRecordingMode=false;} runtime;}
+namespace app {struct {bool isRecording=false;bool isRecordingMode=false;bool aiPetProcessing=false;} runtime;}
 String getRecordingName(){return "voice_record_000012.wav";}
 struct {unsigned long getFreeHeap(){return 192000;}unsigned long getFreePsram(){return 6000000;}} ESP;
 struct Device {String name="Speaker";int status=0;String details="Ready for playback";};

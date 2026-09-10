@@ -3,6 +3,8 @@
 #include <initializer_list>
 #include <cstdio>
 int main(){
+ assert(portal::accountName("new-owner"));assert(portal::accountName("ชื่อใหม่"));
+ for(auto s:{""," leading","trailing ","bad\nname","12345678901234567890123456789012"})assert(!portal::accountName(s));
  assert(portal::filename("holiday.JPG"));assert(portal::filename("ภาพ.png"));
  for(auto s:{"","../a.jpg","a/b.jpg","a\\b.jpg",".hidden","a:","a\n.jpg","a.jpg ","a."})assert(!portal::filename(s));
  assert(portal::directory("Pictures"));assert(!portal::directory("Pictures/../"));assert(!portal::directory("/main"));

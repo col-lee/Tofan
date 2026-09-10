@@ -10,6 +10,7 @@ public:
     void updateAiPetListening();
     void updateAiPetBehavior();
     void reactToAiPetTouch();
+    void reactToAiPetRotation(int steps);
 };
 
 extern AppCoordinator appCoordinator;
