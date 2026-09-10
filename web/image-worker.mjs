@@ -9,7 +9,7 @@ self.onmessage=async({data:{file,options:o}})=>{try{
  let blob,preview;
  if(/\.(mjpeg|mjpg)$/i.test(file.name)){
   if(o.w>640||o.h>480)throw Error('MJPEG: maximum output is 640 x 480');
-  if(file.size>256*1048576)throw Error('MJPEG exceeds 256 MB');
+  if(file.size>256*1048576)throw Error('MJPEG ใหญ่กว่า 256 MB สำหรับการครอปในเบราว์เซอร์ แต่ยังอัปโหลดไฟล์ต้นฉบับได้');
   const bytes=new Uint8Array(await file.arrayBuffer()),parts=[];let total=0;
   for(const [start,end] of mjpegFrames(bytes)){
    const bitmap=await createImageBitmap(new Blob([bytes.subarray(start,end)],{type:'image/jpeg'}));
@@ -18,13 +18,12 @@ self.onmessage=async({data:{file,options:o}})=>{try{
    const frame=await canvas.convertToBlob({type:'image/jpeg',quality:o.quality});
    if(frame.size>512*1024)throw Error('เฟรม MJPEG ใหญ่เกิน 512 KB กรุณาลดคุณภาพหรือขนาดภาพ');
    parts.push(frame);total+=frame.size;
-   if(total>256*1048576)throw Error('Output exceeds 256 MB; reduce size or quality');
-   self.postMessage({progress:Math.round(end/bytes.length*100)});
+      self.postMessage({progress:Math.round(end/bytes.length*100)});
   }
   blob=new Blob(parts,{type:'video/x-motion-jpeg'});
   preview=parts[0];
  }else if(/\.gif$/i.test(file.name)&&o.format==='gif'){
-  if(file.size>16*1048576)throw Error('GIF เกิน 16 MB: เลือกอัปโหลดต้นฉบับหรือไฟล์ที่เล็กลง');
+  if(file.size>16*1048576)throw Error('GIF เกิน 16 MB สำหรับการประมวลผลในเบราว์เซอร์ แต่ยังอัปโหลดไฟล์ต้นฉบับได้');
   const gif=parseGIF(await file.arrayBuffer()),frames=gif.frames.filter(f=>f.image);
   const w=gif.lsd.width,h=gif.lsd.height;
   const loop=gif.frames.find(f=>f.application && /NETSCAPE|ANIMEXTS/.test(f.application.id||''))?.application.blocks;

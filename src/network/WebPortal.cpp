@@ -17,6 +17,9 @@ extern "C" esp_err_t esp_crt_bundle_attach(void* conf);
 #include <new>
 #include <memory>
 #include <algorithm>
+#include <cstdlib>
+#include <cerrno>
+#include <limits>
 #include <time.h>
 
 namespace {
@@ -93,10 +96,10 @@ void uploadChunk(AsyncWebServerRequest* r,String filename,size_t index,uint8_t* 
         r->onDisconnect([r](){auto* p=static_cast<Upload*>(r->_tempObject);r->_tempObject=nullptr;dispose(p);});
         if(!authorized(r,true,false)){u->code=401;u->error="Sign in required";return;}
         r->client()->setRxTimeout(30);
-        String length=r->header("X-File-Size"); char* end=nullptr; unsigned long n=strtoul(length.c_str(),&end,10);
-        if(!length.length() || !end || *end || n==0){u->error="Missing valid X-File-Size";return;} u->expected=n;
+        String length=r->header("X-File-Size"); char* end=nullptr; errno=0; unsigned long long n64=strtoull(length.c_str(),&end,10);
+        if(!length.length() || !end || *end || errno==ERANGE || n64==0 || n64>static_cast<unsigned long long>(std::numeric_limits<size_t>::max())){u->code=413;u->error="Invalid file size for this device";return;}
+        const size_t n=static_cast<size_t>(n64);u->expected=n;
         if(ota && (!portal::firmwareSize(n,slotSize())||!filename.endsWith(".bin"))){u->error="Invalid firmware size or extension";return;}
-        if(!ota && n>portal::MaxUpload){u->code=413;u->error="File exceeds 256 MiB";return;}
         if(rebootAt.load() || (ota && deviceBusy())){u->code=409;u->error="Stop playback and recording before updating";return;}
         bool free=false; if(!transfer.compare_exchange_strong(free,true)){u->code=409;u->error="Another transfer is active";return;} u->owned=true;
         if(ota){updating=true;otaStatus("uploading","",0,n);}
@@ -106,7 +109,8 @@ void uploadChunk(AsyncWebServerRequest* r,String filename,size_t index,uint8_t* 
             Guard g(sdSemaphore);
             if(!g.held||!isConnectSDcard){u->code=503;u->error="SD unavailable";return;}
             if(SD.exists(u->path)){u->code=409;u->error="File already exists; rename the upload";return;}
-            if(SD.totalBytes()-SD.usedBytes()<n+65536){u->code=507;u->error="Not enough SD space";return;}
+            const uint64_t total=SD.totalBytes(),used=SD.usedBytes();
+            if(!portal::uploadFits(static_cast<uint64_t>(n),total,used)){u->code=507;u->error="Not enough SD space";return;}
             u->temp="/main/.upload-"+randomHex()+".part"; u->file=SD.open(u->temp,FILE_WRITE);
             if(!u->file){u->code=500;u->error="Cannot create temporary file";return;}
         }

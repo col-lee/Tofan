@@ -9,7 +9,12 @@ inline bool accountName(const char* value) {
     for(size_t i=0;i<n;i++)if(static_cast<unsigned char>(value[i])<32||value[i]==127)return false;
     return true;
 }
-constexpr size_t MaxUpload = 256u * 1024 * 1024;
+constexpr uint64_t UploadReserve = 64u * 1024u;
+inline bool uploadFits(uint64_t fileSize,uint64_t total,uint64_t used) {
+    if(!fileSize || total < used) return false;
+    const uint64_t available = total - used;
+    return fileSize <= available && available - fileSize >= UploadReserve;
+}
 inline bool filename(const char* s) {
     const size_t n = s ? std::strlen(s) : 0;
     if (!n || n > 120 || s[0] == '.' || s[n-1] == ' ' || s[n-1] == '.') return false;

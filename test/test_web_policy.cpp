@@ -10,6 +10,11 @@ int main(){
  assert(portal::directory("Pictures"));assert(!portal::directory("Pictures/../"));assert(!portal::directory("/main"));
  uint8_t h[24]{};h[0]=0xe9;h[1]=2;h[12]=9;assert(portal::imageHeader(h,24));assert(!portal::imageHeader(h,23));h[12]=0;assert(!portal::imageHeader(h,24));h[12]=9;h[0]=0;assert(!portal::imageHeader(h,24));
  assert(portal::firmwareSize(24,500));assert(!portal::firmwareSize(23,500));assert(!portal::firmwareSize(501,500));
+ assert(portal::uploadFits(1024,1024*1024,0));
+ assert(portal::uploadFits(300ull*1024*1024,512ull*1024*1024,0)); // no fixed 256 MiB media cap
+ assert(!portal::uploadFits(0,1024*1024,0));
+ assert(!portal::uploadFits(1024*1024,1024*1024,0)); // keep filesystem reserve
+ assert(!portal::uploadFits(1,100,101));
  assert(portal::uploadChunkValid(100,0,0,10,false));assert(portal::uploadChunkValid(100,10,10,90,false));
  assert(!portal::uploadChunkValid(100,10,0,10,false)); // duplicate / second multipart file
  assert(!portal::uploadChunkValid(100,10,20,10,false)); // gap
