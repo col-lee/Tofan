@@ -17,7 +17,8 @@ struct AUDIO_COMMAND {
   CommandPath path;    // Owned path, safe for byte-copy queues.
   int32_t trackIndex = -1;
   uint32_t autoAdvanceFrom = 0; // Reject stale end-of-track requests.
-  uint32_t seek_time;  // ใช้สำหรับระบุวินาทีที่จะกรอเพลงไป (เฉพาะตอนสั่ง SEEK)
+  bool videoSync = false;       // Companion audio owned by MJPEG video playback.
+  uint32_t seek_time = 0;       // ใช้สำหรับระบุวินาทีที่จะกรอเพลงไป (เฉพาะตอนสั่ง SEEK)
 };
 static_assert(std::is_trivially_copyable<DISPLAY_COMMAND>::value, "Display queue payload must own its data");
 static_assert(std::is_trivially_copyable<AUDIO_COMMAND>::value, "Audio queue payload must own its data");

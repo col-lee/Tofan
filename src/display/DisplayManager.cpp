@@ -341,7 +341,7 @@ void DisplayManager::loadImageList() {
             String lowerName = name;
             lowerName.toLowerCase();
 
-            // คัดเฉพาะไฟล์ภาพและวิดีโอที่จอรองรับ
+            // คัดเฉพาะไฟล์ภาพ
             if (!isDir && (lowerName.endsWith(".jpg") || lowerName.endsWith(".jpeg") || lowerName.endsWith(".gif") || lowerName.endsWith(".png") || lowerName.endsWith(".mjpeg") || lowerName.endsWith(".mjpg"))) {
                 imageNames.push_back(name);
                 imagePaths.push_back(String(directory) + "/" + name);
@@ -441,176 +441,245 @@ void DisplayManager::drawColorPicker(bool pushToScreen) {
     footer(colorPhase==2?"Turn to adjust / Press save / Back cancel":"Turn to adjust / Press next / Back cancel"); present(pushToScreen);
 }
 
-void DisplayManager::drawAIPet(bool pushToScreen) {
-    if(spr.getBuffer() == nullptr) return;
-
-    // พื้นหลังดำสนิท
-    spr.fillSprite(C_BG);
-
-    // ตัวแปรสถานะแอนิเมชัน
-    static float cur_r = 255, cur_g = 255, cur_b = 255;
-    static float cur_eyeW = 40, cur_eyeH_L = 60, cur_eyeH_R = 60, cur_eyeY = -15;
-    static float cur_mouthW = 40, cur_mouthH = 8, cur_mouthY = 45, cur_mouthX = 0;
-
-    static float cur_gazeX = 0, cur_gazeY = 0;
-    static float tar_gazeX = 0, tar_gazeY = 0;
-
-    // เปลือกตา (0 คือตาเปิดเต็มที่)
-    static float cur_eyelidDrop = 0;
-    static float cur_angryBrow = 0;
-
-    static unsigned long nextBlinkTime = millis() + 2000;
-    static unsigned long nextGazeTime = millis() + 1000;
-
-    // --- ระบบฟิสิกส์การลอยตัว ---
-    float time = millis() / 1000.0;
-    float floatY = sin(time * 2.5) * 10.0;
-    int anchorX = tft.width() / 2;
-    int anchorY = tft.height() / 2 + floatY;
-
-    // --- ระบบ AI สอดส่ายสายตา ---
-    if (millis() > nextGazeTime) {
-        if (random(100) > 30) {
-            tar_gazeX = random(-50, 50);
-            tar_gazeY = random(-15, 15);
-        } else {
-            tar_gazeX = 0; tar_gazeY = 0;
-        }
-        nextGazeTime = millis() + random(800, 3000);
-    }
-
-    // --- ระบบกะพริบตา ---
-    if (millis() > nextBlinkTime) {
-        cur_eyeH_L = 0;
-        cur_eyeH_R = 0;
-        nextBlinkTime = millis() + random(3000, 6000);
-    }
-
-    // --- กำหนดเป้าหมายอารมณ์ (Target Moods) ---
-    // ค่าพื้นฐาน (หน้าปกติ สีขาวล้วน)
-    float tar_r = 255, tar_g = 255, tar_b = 255;
-    float tar_eyeW = 40, tar_eyeH_L = 60, tar_eyeH_R = 60, tar_eyeY = -15;
-    float tar_mouthW = 40, tar_mouthH = 8, tar_mouthY = 45, tar_mouthX = 0;
-    float tar_eyelidDrop = 0;
-    float tar_angryBrow = 0;
-
-    switch(petMood) {
-        case 1: // 😒 Deadpan (หน้าเซ็ง/หน้าตาย แบบในรูป)
-            tar_r = 255; tar_g = 255; tar_b = 255; // สีขาวล้วนเหมือนหน้าปกติ
-            tar_eyeW = 40;
-            tar_eyeH_L = 60; tar_eyeH_R = 60; tar_eyeY = -15;
-
-            tar_eyelidDrop = 35; // เปลือกตาปิดลงมาเกินครึ่ง
-
-            // ลดความหนาปากลงเหลือแค่ 4 พิกเซล จะได้เป็นขีดเส้นตรง ไม่ดูเหมือนยิ้ม
-            tar_mouthW = 40; tar_mouthH = 4; tar_mouthY = 45; tar_mouthX = 0;
-            break;
-
-        case 2: // 😂 Laughing (หัวเราะตัวสั่น)
-            tar_eyeH_L = 40; tar_eyeH_R = 40; // หรี่ตาลงนิดนึงให้ดูดุ
-            tar_eyeY = -5;
-
-            tar_angryBrow = 30; // สั่งให้สามเหลี่ยมตัดขอบตาเฉียงลงมา 30 พิกเซล
-
-            tar_mouthW = 15; // ปากหดสั้นจู๋ (เหมือนเม้มปากแน่นด้วยความโกรธ)
-            tar_mouthY = 40;
-            break;
-    }
-
-    // Open the mouth from live microphone amplitude while listening or playing.
-    float voiceActivity = abs((int)readMicData()) / 12000.0f;
-    if (voiceActivity > 1.0f) voiceActivity = 1.0f;
-    if (app::runtime.isRecording || isPlayingAudio) {
-        tar_mouthH += voiceActivity * 26.0f;
-    }
-
-    // --- สมการ Lerp (Smooth Transition) ---
-    float speed = 0.25;
-    float gazeSpeed = 0.35;
-
-    cur_r += (tar_r - cur_r) * speed;
-    cur_g += (tar_g - cur_g) * speed;
-    cur_b += (tar_b - cur_b) * speed;
-    cur_eyeW += (tar_eyeW - cur_eyeW) * speed;
-    cur_eyeH_L += (tar_eyeH_L - cur_eyeH_L) * speed;
-    cur_eyeH_R += (tar_eyeH_R - cur_eyeH_R) * speed;
-    cur_eyeY += (tar_eyeY - cur_eyeY) * speed;
-    cur_mouthW += (tar_mouthW - cur_mouthW) * speed;
-    cur_mouthH += (tar_mouthH - cur_mouthH) * speed;
-    cur_mouthY += (tar_mouthY - cur_mouthY) * speed;
-    cur_mouthX += (tar_mouthX - cur_mouthX) * speed;
-
-    cur_eyelidDrop += (tar_eyelidDrop - cur_eyelidDrop) * speed; // Lerp เปลือกตา
-    cur_angryBrow += (tar_angryBrow - cur_angryBrow) * speed;
-
-    cur_gazeX += (tar_gazeX - cur_gazeX) * gazeSpeed;
-    cur_gazeY += (tar_gazeY - cur_gazeY) * gazeSpeed;
-
-    // --- เริ่มการวาด ---
-    uint16_t faceColor = C_TEXT;
-    uint16_t blushColor = C_BAR_FG;
-
-    int faceX = anchorX + cur_gazeX;
-    int faceY = anchorY + cur_gazeY;
-    int eyeSpacing = 70;
-
-    // วาดแก้มแดง
-    int blushX = anchorX + (cur_gazeX * 0.75);
-    int blushY = anchorY + (cur_gazeY * 0.75);
-    spr.fillEllipse(blushX - eyeSpacing - 25, blushY + 25, 20, 10, blushColor);
-    spr.fillEllipse(blushX + eyeSpacing + 25, blushY + 25, 20, 10, blushColor);
-
-    int eyeRad = 15;
-
-    // พิกัดตาซ้ายและขวา
-    int eyeL_X = faceX - eyeSpacing - cur_eyeW/2;
-    int eyeL_Y = faceY + cur_eyeY - cur_eyeH_L/2;
-    int eyeR_X = faceX + eyeSpacing - cur_eyeW/2;
-    int eyeR_Y = faceY + cur_eyeY - cur_eyeH_R/2;
-
-    // 1. วาดตาสี่เหลี่ยมขอบมนเต็มดวง
-    spr.fillRoundRect(eyeL_X, eyeL_Y, cur_eyeW, cur_eyeH_L, eyeRad, faceColor);
-    spr.fillRoundRect(eyeR_X, eyeR_Y, cur_eyeW, cur_eyeH_R, eyeRad, faceColor);
-
-    // 2. วาด "เปลือกตาสีดำ" ทับส่วนบน
-    if (cur_eyelidDrop > 1.0) {
-        spr.fillRect(eyeL_X, eyeL_Y - 2, cur_eyeW, cur_eyelidDrop + 2, C_BG);
-        spr.fillRect(eyeR_X, eyeR_Y - 2, cur_eyeW, cur_eyelidDrop + 2, C_BG);
-    }
-
-    if (cur_angryBrow > 1.0) {
-        // ตาซ้าย (มุมตัดเฉียงลงไปทางขวา \)
-        spr.fillTriangle(eyeL_X - 10, eyeL_Y - 10,
-                         eyeL_X + cur_eyeW + 10, eyeL_Y - 10,
-                         eyeL_X + cur_eyeW + 10, eyeL_Y + cur_angryBrow, C_BG);
-        // ตาขวา (มุมตัดเฉียงลงไปทางซ้าย /)
-        spr.fillTriangle(eyeR_X - 10, eyeR_Y - 10,
-                         eyeR_X + cur_eyeW + 10, eyeR_Y - 10,
-                         eyeR_X - 10, eyeR_Y + cur_angryBrow, C_BG);
-    }
-
-    // วาดปาก
-    int pMouthX = faceX + cur_mouthX;
-    int pMouthY = faceY + cur_mouthY;
-
-    if (cur_mouthH <= 12) {
-        // ปากเส้นตรง
-        spr.fillRoundRect(pMouthX - cur_mouthW/2, pMouthY - cur_mouthH/2, cur_mouthW, cur_mouthH, 4, faceColor);
-
+void DisplayManager::setPetMood(ui::PetMood mood, const char* message, unsigned long holdMs) {
+    petMood = mood;
+    petMoodUntil = holdMs ? millis() + holdMs : 0;
+    lastMoodChange = millis();
+    if (message && *message) {
+        snprintf(petMessage, sizeof(petMessage), "%s", message);
     } else {
-        // ปากโค้งยิ้ม
-        spr.fillEllipse(pMouthX, pMouthY, cur_mouthW/2, cur_mouthH/2, faceColor);
-        if (petMood == 0) {
-            spr.fillRect(pMouthX - cur_mouthW, pMouthY - cur_mouthH, cur_mouthW*2, cur_mouthH, C_BG);
+        petMessage[0] = '\0';
+    }
+}
+
+bool DisplayManager::isPetMoodHeld() const {
+    return petMoodUntil != 0 && static_cast<int32_t>(petMoodUntil - millis()) > 0;
+}
+
+void DisplayManager::setPetVoiceLevel(float level) {
+    if (level < 0.0f) level = 0.0f;
+    if (level > 1.0f) level = 1.0f;
+    petVoiceLevel = level;
+}
+
+void DisplayManager::drawAIPet(bool pushToScreen) {
+    if (spr.getBuffer() == nullptr) return;
+
+    // Fixed AI Pet palette: deliberately NOT connected to the user UI theme.
+    const uint16_t PET_BG       = tft.color565(14, 17, 30);
+    const uint16_t PET_PANEL    = tft.color565(29, 34, 52);
+    const uint16_t PET_FACE     = tft.color565(255, 244, 230);
+    const uint16_t PET_BLUSH    = tft.color565(255, 137, 174);
+    const uint16_t PET_MINT     = tft.color565(111, 232, 201);
+    const uint16_t PET_SKY      = tft.color565(123, 203, 255);
+    const uint16_t PET_YELLOW   = tft.color565(255, 220, 116);
+    const uint16_t PET_CORAL    = tft.color565(255, 134, 123);
+    const uint16_t PET_LAVENDER = tft.color565(190, 166, 255);
+    const uint16_t PET_MUTED    = tft.color565(151, 158, 184);
+
+    struct Visual {
+        float eyeW = 38, eyeHL = 56, eyeHR = 56, eyeY = -10;
+        float mouthW = 34, mouthH = 6, mouthY = 47;
+        float eyelid = 0, brow = 0, blush = 1.0f;
+        int gazeX = 0, gazeY = 0;
+        bool xEyes = false, openMouth = false, sweat = false;
+        bool sparkles = false, soundWaves = false, thoughtDots = false, notes = false;
+        uint16_t accent = PET_MINT;
+    } target;
+
+    switch (petMood) {
+        case ui::PetMood::Happy:
+            target.eyeW=42; target.eyeHL=34; target.eyeHR=34; target.eyeY=-8;
+            target.mouthW=44; target.mouthH=18; target.mouthY=44; target.openMouth=true;
+            target.blush=1.35f; target.accent=PET_YELLOW; target.sparkles=true; break;
+        case ui::PetMood::Curious:
+            target.eyeW=42; target.eyeHL=60; target.eyeHR=45; target.gazeX=16; target.gazeY=-7;
+            target.mouthW=14; target.mouthH=15; target.openMouth=true;
+            target.accent=PET_MINT; target.thoughtDots=true; break;
+        case ui::PetMood::Sleepy:
+            target.eyeW=46; target.eyeHL=9; target.eyeHR=9; target.eyeY=-3;
+            target.mouthW=28; target.mouthH=5; target.mouthY=46; target.blush=.65f;
+            target.accent=PET_SKY; break;
+        case ui::PetMood::Tired:
+            target.eyeW=42; target.eyeHL=27; target.eyeHR=23; target.eyeY=-3;
+            target.eyelid=8; target.mouthW=34; target.mouthH=4; target.mouthY=48;
+            target.blush=.45f; target.sweat=true; target.accent=PET_SKY; break;
+        case ui::PetMood::Listening:
+            target.eyeW=44; target.eyeHL=54; target.eyeHR=64; target.eyeY=-10;
+            target.gazeX=-6; target.mouthW=16; target.mouthH=10 + petVoiceLevel*20.0f;
+            target.mouthY=46; target.openMouth=true; target.soundWaves=true;
+            target.accent=PET_SKY; break;
+        case ui::PetMood::Surprised:
+            target.eyeW=50; target.eyeHL=66; target.eyeHR=66; target.eyeY=-12;
+            target.mouthW=19; target.mouthH=25; target.mouthY=48; target.openMouth=true;
+            target.blush=.7f; target.accent=PET_YELLOW; break;
+        case ui::PetMood::Playful:
+            target.eyeW=42; target.eyeHL=8; target.eyeHR=46; target.gazeX=10;
+            target.mouthW=42; target.mouthH=15; target.openMouth=true;
+            target.blush=1.4f; target.accent=PET_MINT; target.sparkles=true; break;
+        case ui::PetMood::Shy:
+            target.eyeW=33; target.eyeHL=32; target.eyeHR=32; target.eyeY=2; target.gazeY=9;
+            target.mouthW=20; target.mouthH=5; target.mouthY=45; target.blush=1.75f;
+            target.accent=PET_BLUSH; break;
+        case ui::PetMood::Thinking:
+            target.eyeW=35; target.eyeHL=43; target.eyeHR=43; target.gazeX=18; target.gazeY=-12;
+            target.mouthW=12; target.mouthH=10; target.openMouth=true;
+            target.thoughtDots=true; target.accent=PET_LAVENDER; break;
+        case ui::PetMood::Grumpy:
+            target.eyeW=42; target.eyeHL=34; target.eyeHR=34; target.eyeY=-4;
+            target.brow=20; target.mouthW=30; target.mouthH=4; target.blush=.45f;
+            target.accent=PET_CORAL; break;
+        case ui::PetMood::Dizzy:
+            target.xEyes=true; target.eyeW=38; target.eyeHL=38; target.eyeHR=38;
+            target.mouthW=18; target.mouthH=18; target.openMouth=true;
+            target.accent=PET_LAVENDER; target.sparkles=true; break;
+        case ui::PetMood::Proud:
+            target.eyeW=44; target.eyeHL=17; target.eyeHR=17; target.eyeY=-5;
+            target.mouthW=43; target.mouthH=13; target.openMouth=true;
+            target.blush=1.05f; target.accent=PET_YELLOW; break;
+        case ui::PetMood::Excited:
+            target.eyeW=49; target.eyeHL=61; target.eyeHR=61; target.eyeY=-12;
+            target.mouthW=47; target.mouthH=26; target.openMouth=true;
+            target.blush=1.5f; target.sparkles=true; target.accent=PET_YELLOW; break;
+        case ui::PetMood::Dancing:
+            target.eyeW=45; target.eyeHL=9; target.eyeHR=9; target.eyeY=-4;
+            target.mouthW=42; target.mouthH=16; target.openMouth=true;
+            target.blush=1.2f; target.notes=true; target.accent=PET_LAVENDER; break;
+        case ui::PetMood::Neutral:
+        default:
+            target.accent=PET_MINT; break;
+    }
+
+    const unsigned long now = millis();
+    static float curEyeW=38,curEyeHL=56,curEyeHR=56,curEyeY=-10;
+    static float curMouthW=34,curMouthH=6,curMouthY=47;
+    static float curLid=0,curBrow=0,curBlush=1;
+    static float curGazeX=0,curGazeY=0;
+    static int randomGazeX=0,randomGazeY=0;
+    static unsigned long nextGaze=0,nextBlink=0,blinkUntil=0;
+
+    if (now >= nextGaze) {
+        randomGazeX=random(-12,13); randomGazeY=random(-5,6);
+        nextGaze=now+random(900,2600);
+    }
+    if (now >= nextBlink && petMood!=ui::PetMood::Sleepy && !target.xEyes) {
+        blinkUntil=now+105;
+        nextBlink=now+random(2600,5600);
+    }
+    const bool blinking=static_cast<int32_t>(blinkUntil-now)>0;
+    if (blinking) { target.eyeHL=5; target.eyeHR=5; target.eyelid=0; }
+
+    const float lerp=.22f;
+    curEyeW+=(target.eyeW-curEyeW)*lerp; curEyeHL+=(target.eyeHL-curEyeHL)*lerp;
+    curEyeHR+=(target.eyeHR-curEyeHR)*lerp; curEyeY+=(target.eyeY-curEyeY)*lerp;
+    curMouthW+=(target.mouthW-curMouthW)*lerp; curMouthH+=(target.mouthH-curMouthH)*lerp;
+    curMouthY+=(target.mouthY-curMouthY)*lerp; curLid+=(target.eyelid-curLid)*lerp;
+    curBrow+=(target.brow-curBrow)*lerp; curBlush+=(target.blush-curBlush)*lerp;
+    curGazeX+=((target.gazeX+randomGazeX)-curGazeX)*.18f;
+    curGazeY+=((target.gazeY+randomGazeY)-curGazeY)*.18f;
+
+    spr.fillSprite(PET_BG);
+
+    // Status bubble / mumble text.
+    if (petMessage[0]) {
+        spr.setTextFont(1); spr.setTextSize(1); spr.setTextDatum(MC_DATUM);
+        int bubbleW=spr.textWidth(petMessage)+28;
+        if(bubbleW<70)bubbleW=70; if(bubbleW>220)bubbleW=220;
+        const int bx=(tft.width()-bubbleW)/2;
+        spr.fillRoundRect(bx,8,bubbleW,28,12,PET_PANEL);
+        spr.drawRoundRect(bx,8,bubbleW,28,12,target.accent);
+        spr.setTextColor(PET_FACE); spr.drawString(petMessage,tft.width()/2,22,1);
+        spr.fillTriangle(tft.width()/2-5,35,tft.width()/2+5,35,tft.width()/2,42,PET_PANEL);
+    }
+
+    float bob=sin(now*(petMood == ui::PetMood::Excited ? .010f : .0042f))*4.0f;
+    if(petMood==ui::PetMood::Dancing) bob=sin(now*.016f)*7.0f;
+    const int anchorX=tft.width()/2;
+    const int anchorY=tft.height()/2+8+static_cast<int>(bob);
+    const int spacing=68;
+    const int faceX=anchorX+static_cast<int>(curGazeX);
+    const int faceY=anchorY+static_cast<int>(curGazeY);
+
+    // Cute cheeks; intensity varies by mood.
+    const int blushW=static_cast<int>(18*curBlush), blushH=static_cast<int>(8*curBlush);
+    if(blushW>3 && blushH>2){
+        spr.fillEllipse(faceX-spacing-31,faceY+24,blushW,blushH,PET_BLUSH);
+        spr.fillEllipse(faceX+spacing+31,faceY+24,blushW,blushH,PET_BLUSH);
+    }
+
+    const int eyeLX=faceX-spacing-static_cast<int>(curEyeW/2);
+    const int eyeRX=faceX+spacing-static_cast<int>(curEyeW/2);
+    const int eyeLY=faceY+static_cast<int>(curEyeY-curEyeHL/2);
+    const int eyeRY=faceY+static_cast<int>(curEyeY-curEyeHR/2);
+
+    if(target.xEyes){
+        const int r=16;
+        for(int o=-2;o<=2;++o){
+            spr.drawLine(faceX-spacing-r,faceY-12-r+o,faceX-spacing+r,faceY-12+r+o,PET_FACE);
+            spr.drawLine(faceX-spacing-r,faceY-12+r+o,faceX-spacing+r,faceY-12-r+o,PET_FACE);
+            spr.drawLine(faceX+spacing-r,faceY-12-r+o,faceX+spacing+r,faceY-12+r+o,PET_FACE);
+            spr.drawLine(faceX+spacing-r,faceY-12+r+o,faceX+spacing+r,faceY-12-r+o,PET_FACE);
+        }
+    }else{
+        const int radius=14;
+        spr.fillRoundRect(eyeLX,eyeLY,static_cast<int>(curEyeW),static_cast<int>(curEyeHL),radius,PET_FACE);
+        spr.fillRoundRect(eyeRX,eyeRY,static_cast<int>(curEyeW),static_cast<int>(curEyeHR),radius,PET_FACE);
+        if(curLid>1){
+            spr.fillRect(eyeLX-2,eyeLY-2,static_cast<int>(curEyeW)+4,static_cast<int>(curLid)+2,PET_BG);
+            spr.fillRect(eyeRX-2,eyeRY-2,static_cast<int>(curEyeW)+4,static_cast<int>(curLid)+2,PET_BG);
+        }
+        if(curBrow>1){
+            spr.fillTriangle(eyeLX-8,eyeLY-10,eyeLX+static_cast<int>(curEyeW)+8,eyeLY-10,eyeLX+static_cast<int>(curEyeW)+8,eyeLY+static_cast<int>(curBrow),PET_BG);
+            spr.fillTriangle(eyeRX-8,eyeRY-10,eyeRX+static_cast<int>(curEyeW)+8,eyeRY-10,eyeRX-8,eyeRY+static_cast<int>(curBrow),PET_BG);
         }
     }
 
-    footer("AI Pet  /  Hold Back for volume  /  Back");
-    if (pushToScreen) {
-        if(xSemaphoreTake(displaySemaphore, 0) == pdTRUE) {
-            spr.pushSprite(0, 0);
-            xSemaphoreGive(displaySemaphore);
+    const int mouthX=faceX, mouthY=faceY+static_cast<int>(curMouthY);
+    const int mouthW=static_cast<int>(curMouthW), mouthH=static_cast<int>(curMouthH);
+    if(target.openMouth && mouthH>8){
+        spr.fillEllipse(mouthX,mouthY,mouthW/2,mouthH/2,PET_FACE);
+        if(petMood!=ui::PetMood::Surprised && petMood!=ui::PetMood::Listening && petMood!=ui::PetMood::Dizzy){
+            spr.fillRect(mouthX-mouthW/2-2,mouthY-mouthH/2-2,mouthW+4,mouthH/2+2,PET_BG);
+        }else if(mouthW>10 && mouthH>12){
+            spr.fillEllipse(mouthX,mouthY,mouthW/4,mouthH/4,PET_BG);
         }
+    }else{
+        spr.fillRoundRect(mouthX-mouthW/2,mouthY-mouthH/2,mouthW,mouthH,3,PET_FACE);
+    }
+
+    // Mood decorations.
+    if(target.sweat){
+        spr.fillTriangle(faceX+spacing+37,faceY-43,faceX+spacing+29,faceY-27,faceX+spacing+44,faceY-27,PET_SKY);
+        spr.fillCircle(faceX+spacing+36,faceY-26,7,PET_SKY);
+    }
+    if(target.sparkles){
+        spr.fillCircle(faceX-spacing-50,faceY-42,3,target.accent);
+        spr.drawLine(faceX-spacing-56,faceY-42,faceX-spacing-44,faceY-42,target.accent);
+        spr.drawLine(faceX-spacing-50,faceY-48,faceX-spacing-50,faceY-36,target.accent);
+        spr.fillCircle(faceX+spacing+48,faceY-34,2,target.accent);
+    }
+    if(target.soundWaves){
+        const int wave=4+static_cast<int>(petVoiceLevel*9.0f);
+        spr.drawCircle(faceX+spacing+40,faceY-8,wave,target.accent);
+        spr.drawCircle(faceX+spacing+40,faceY-8,wave+7,target.accent);
+    }
+    if(target.thoughtDots){
+        spr.fillCircle(faceX+spacing+40,faceY-48,3,target.accent);
+        spr.fillCircle(faceX+spacing+51,faceY-58,4,target.accent);
+        spr.fillCircle(faceX+spacing+64,faceY-69,5,target.accent);
+    }
+    if(target.notes){
+        spr.fillCircle(faceX-spacing-51,faceY-31,4,target.accent); spr.fillRect(faceX-spacing-47,faceY-47,3,17,target.accent);
+        spr.fillCircle(faceX+spacing+51,faceY-39,4,target.accent); spr.fillRect(faceX+spacing+55,faceY-56,3,18,target.accent);
+    }
+
+    // Small fixed-color footer. Do not call footer(), because footer() uses UI theme colors.
+    spr.setTextDatum(MC_DATUM); spr.setTextFont(1); spr.setTextSize(1); spr.setTextColor(PET_MUTED);
+    spr.drawString("Press: pet me  /  Speak: I can hear  /  Back",tft.width()/2,tft.height()-10,1);
+
+    if(pushToScreen && xSemaphoreTake(displaySemaphore,0)==pdTRUE){
+        spr.pushSprite(0,0);
+        xSemaphoreGive(displaySemaphore);
     }
 }
 

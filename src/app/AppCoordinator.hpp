@@ -8,6 +8,8 @@ public:
     void startAiPetListening();
     void stopAiPetListening();
     void updateAiPetListening();
+    void updateAiPetBehavior();
+    void reactToAiPetTouch();
 };
 
 extern AppCoordinator appCoordinator;

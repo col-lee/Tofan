@@ -183,7 +183,7 @@ void InputController::handleInput() {
                 case 0: DISM.loadImageList();enter(UI_STATE::APP_DISPLAY_LIST);break;
                 case 1: DISM.loadMusicList();DISM.currentMusicControlIndex=1;enter(UI_STATE::APP_MUSIC);break;
                 case 2: settingsPage(Page::Root);break;
-                case 3: DISM.currentState=UI_STATE::APP_PET;appCoordinator.startAiPetListening();enter(UI_STATE::APP_PET);break;
+                case 3: DISM.setPetMood(ui::PetMood::Happy,"hi~",1600);enter(UI_STATE::APP_PET);appCoordinator.startAiPetListening();break;
                 case 4: DISM.debugSelectedIndex=0;DISM.debugScrollOffset=0;enter(UI_STATE::DEBUG);break;
                 case 5:
                     if(enterRecordingMode()) { DISM.seconds=0;DISM.previousMillis=millis();enter(UI_STATE::RECORDE); }
@@ -228,6 +228,9 @@ void InputController::handleInput() {
         } else if(DISM.currentState==UI_STATE::APP_COLOR_PICKER) {
             if(DISM.colorPhase<2) { ++DISM.colorPhase;configureEncoder();drawCurrent(); }
             else { saveSettings();enter(UI_STATE::APP_SETTINGS); }
+        } else if(DISM.currentState==UI_STATE::APP_PET) {
+            appCoordinator.reactToAiPetTouch();
+            drawCurrent();
         } else if(DISM.currentState==UI_STATE::GLOBAL_VOLUME) finishVolume();
         else if(DISM.currentState==UI_STATE::RECORDE) {
             if(app::runtime.isRecording) stopRecording();

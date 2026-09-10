@@ -25,10 +25,63 @@ int currentAudioProgress = 0;
 unsigned long lastProgressUpdate = 0;
 static PlaybackEvents playbackEvents;
 static std::atomic<int> requestedVolume{50};
+
+// A video owns its companion audio only while this flag is set.  The clock
+// is updated by the audio task from Audio::getTotalPlayingTime(), so the
+// display task can pace MJPEG frames against the sound without touching the
+// Audio object from another core.
+static std::atomic<bool> videoAudioPending{false};
+static std::atomic<bool> videoAudioActive{false};
+static std::atomic<uint32_t> videoAudioClock{0};
+
 int consumeStartedTrack() { return playbackEvents.takeStarted(); }
 static std::atomic<bool> voiceAssistantEnabled{false};
 static bool classifierNeedsReset = true;
 void setOutputVolume(int percent) { requestedVolume.store(preferences::clamp(percent,0,100)); }
+
+bool startVideoCompanionAudio(const String& path) {
+    if (!audio_command || !path.length()) return false;
+
+    AUDIO_COMMAND cmd{};
+    cmd.module = AUDIO_COMMAND::AUDIO;
+    cmd.audio_state = AUDIO_COMMAND::PLAY;
+    cmd.path = path;
+    cmd.videoSync = true;
+
+    videoAudioPending.store(true);
+    videoAudioActive.store(false);
+    videoAudioClock.store(0);
+
+    if (xQueueSend(audio_command, &cmd, pdMS_TO_TICKS(50)) != pdPASS) {
+        videoAudioPending.store(false);
+        return false;
+    }
+    return true;
+}
+
+void stopVideoCompanionAudio() {
+    if (!videoAudioPending.load() && !videoAudioActive.load()) return;
+    if (!audio_command) {
+        videoAudioPending.store(false);
+        videoAudioActive.store(false);
+        videoAudioClock.store(0);
+        return;
+    }
+
+    AUDIO_COMMAND cmd{};
+    cmd.module = AUDIO_COMMAND::AUDIO;
+    cmd.audio_state = AUDIO_COMMAND::STOP;
+    cmd.videoSync = true;
+    xQueueSend(audio_command, &cmd, pdMS_TO_TICKS(50));
+}
+
+bool videoCompanionAudioActive() {
+    return videoAudioActive.load();
+}
+
+uint32_t videoCompanionAudioClockMs() {
+    return videoAudioClock.load();
+}
 void setVoiceAssistantEnabled(bool enabled) { voiceAssistantEnabled.store(enabled); classifierNeedsReset=true; }
 uint32_t consumeFinishedTrack() {
     return playbackEvents.takeCompleted();
@@ -389,7 +442,9 @@ static int i2s_init(uint32_t samplingRate) {
 
 
 void handleAudio(void *parameter) {
-  AUDIO_COMMAND cmd;
+  // Keep the 1 KiB+ queue payload out of this task's stack.
+  // ESP32-audioI2S also uses sizeable temporary stack buffers while opening files.
+  static AUDIO_COMMAND cmd;
   int volume = -1;
   enum AudioState {
     STATE_STOPPED,
@@ -399,6 +454,7 @@ void handleAudio(void *parameter) {
 
   unsigned long lastVolumeUpdate = 0;
   unsigned long lastWsUpdate = 0;
+  bool currentTrackIsVideoAudio = false;
 
   for(;;) {
     const int level=preferences::hardwareVolume(requestedVolume.load());
@@ -413,18 +469,31 @@ void handleAudio(void *parameter) {
             bool connected = false;
             if(requestedPath != "" && requestedPath != "null") {
               currentFilePath = requestedPath;
-              audio.stopSong();
               currentAudioProgress = 0;
               currentAudioTime = 0;
               totalAudioDuration = 0;
               isOnlineAudio = currentFilePath.startsWith("http://") || currentFilePath.startsWith("https://");
 
-              if (currentFilePath.startsWith("http://") || currentFilePath.startsWith("https://")) {
+              // connecttohost()/connecttoFS() already call Audio::setDefaults(),
+              // which stops/closes the previous source. Calling stopSong() here as
+              // well caused the Audio object to be torn down twice during fast
+              // music -> video transitions.
+              if (isOnlineAudio) {
                   currentSongTitle = "Online radio";
-                  connected = audio.connecttohost(currentFilePath.c_str()); // ตั้งชื่อรอไว้ก่อน
+                  connected = audio.connecttohost(currentFilePath.c_str());
               } else {
-                  if(xSemaphoreTake(sdSemaphore, pdMS_TO_TICKS(500)) == pdTRUE) {
-                    connected = audio.connecttoSD(currentFilePath.c_str());
+                  if(xSemaphoreTake(sdSemaphore, pdMS_TO_TICKS(1000)) == pdTRUE) {
+                    const bool exists = SD.exists(currentFilePath.c_str());
+                    if (exists) {
+                      Serial.printf("[AUDIO] Opening %s | stack watermark=%u\n",
+                                    currentFilePath.c_str(),
+                                    static_cast<unsigned>(uxTaskGetStackHighWaterMark(nullptr)));
+                      // Use the generic FS entry point explicitly. It is the
+                      // library's documented path for SD/SD_MMC/SPIFFS.
+                      connected = audio.connecttoFS(SD, currentFilePath.c_str());
+                    } else {
+                      Serial.printf("[AUDIO] File not found: %s\n", currentFilePath.c_str());
+                    }
                     xSemaphoreGive(sdSemaphore);
                   }
 
@@ -442,6 +511,10 @@ void handleAudio(void *parameter) {
             }
             currentState = connected ? STATE_PLAYING : STATE_STOPPED;
             isPlayingAudio = connected;
+            currentTrackIsVideoAudio = connected && cmd.videoSync;
+            videoAudioPending.store(false);
+            videoAudioActive.store(currentTrackIsVideoAudio);
+            videoAudioClock.store(0);
             if (connected && cmd.trackIndex >= 0) playbackEvents.markStarted(cmd.trackIndex);
             hasPausedAudio = false;
             if (!connected) currentSongTitle = "Unable to play - retry";
@@ -454,6 +527,7 @@ void handleAudio(void *parameter) {
               currentState = STATE_PAUSED;
               hasPausedAudio = true;
               isPlayingAudio = false;
+              if (currentTrackIsVideoAudio) videoAudioActive.store(false);
             }
             break;
 
@@ -461,6 +535,7 @@ void handleAudio(void *parameter) {
             audio.audioFileSeek(cmd.seek_time);
             currentState = STATE_PLAYING;
             isPlayingAudio = true;
+            if (currentTrackIsVideoAudio) videoAudioActive.store(true);
             break;
 
           case AUDIO_COMMAND::AUDIO_STATE::STOP:
@@ -468,6 +543,10 @@ void handleAudio(void *parameter) {
             hasPausedAudio = false;
             currentState = STATE_STOPPED;
             isPlayingAudio = false;
+            currentTrackIsVideoAudio = false;
+            videoAudioPending.store(false);
+            videoAudioActive.store(false);
+            videoAudioClock.store(0);
             break;
         }
       }
@@ -496,10 +575,19 @@ void handleAudio(void *parameter) {
       }
     }
 
+    if (currentState == STATE_PLAYING && currentTrackIsVideoAudio) {
+      videoAudioClock.store(audio.getTotalPlayingTime());
+      videoAudioActive.store(audio.isRunning());
+    }
+
     if (currentState == STATE_PLAYING && !audio.isRunning()) {
       currentState = STATE_STOPPED;
       isPlayingAudio = false;
       hasPausedAudio = false;
+      if (currentTrackIsVideoAudio) {
+        currentTrackIsVideoAudio = false;
+        videoAudioActive.store(false);
+      }
       if (isOnlineAudio) currentSongTitle = "Stream ended - retry";
     }
     if(currentState == STATE_STOPPED || currentState == STATE_PAUSED) {

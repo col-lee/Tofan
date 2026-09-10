@@ -30,6 +30,14 @@ extern bool isAudio_install;
 
 void initAudio();
 void setOutputVolume(int percent);
+
+// MJPEG files do not contain audio. Video playback uses a same-name
+// companion audio file stored beside the .mjpeg/.mjpg file.
+bool startVideoCompanionAudio(const String& path);
+void stopVideoCompanionAudio();
+bool videoCompanionAudioActive();
+uint32_t videoCompanionAudioClockMs();
+
 void setVoiceAssistantEnabled(bool enabled);
 void initMicrophone();
 int16_t readMicData();

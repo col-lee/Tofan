@@ -4,7 +4,6 @@
 #include "DisplayManager.hpp"
 
 #include <algorithm>
-#include <cmath>
 #include <esp_heap_caps.h>
 
 namespace {
@@ -25,7 +24,6 @@ size_t buffered = 0;
 
 uint32_t nextFrameAt = 0;
 bool hasFrame = false;
-uint32_t decodedFrames = 0;
 
 struct Reader {
     int read() {
@@ -140,15 +138,6 @@ void closeVideo() {
     reader.reset();
     nextFrameAt = 0;
     hasFrame = false;
-    decodedFrames = 0;
-}
-
-bool videoIsPlaying() {
-    return frame != nullptr && static_cast<bool>(video);
-}
-
-uint32_t videoFramesDecoded() {
-    return decodedFrames;
 }
 
 bool openVideo(const String& path) {
@@ -190,7 +179,6 @@ bool openVideo(const String& path) {
 
     nextFrameAt = millis(); // show first frame immediately
     hasFrame = false;
-    decodedFrames = 0;
     return true;
 }
 
@@ -265,31 +253,13 @@ bool advanceVideo() {
         static_cast<float>(tft.height()) / static_cast<float>(height)
     );
 
-    // Do not rely on JPEG datum positioning here.  When a scaled JPEG is
-    // decoded from memory, explicitly calculate the scaled rectangle and
-    // pass its top-left position.  This prevents the frame from drifting
-    // toward the lower-right corner on rotated displays.
-    const int32_t scaledWidth = std::max<int32_t>(
-        1, static_cast<int32_t>(std::lround(static_cast<float>(width) * scale))
-    );
-    const int32_t scaledHeight = std::max<int32_t>(
-        1, static_cast<int32_t>(std::lround(static_cast<float>(height) * scale))
-    );
-    const int32_t drawX = (static_cast<int32_t>(tft.width()) - scaledWidth) / 2;
-    const int32_t drawY = (static_cast<int32_t>(tft.height()) - scaledHeight) / 2;
-
-    if (!hasFrame) {
-        Serial.printf(
-            "[VIDEO] Render: scale=%.3f size=%ldx%ld pos=(%ld,%ld) screen=%dx%d\n",
-            static_cast<double>(scale),
-            static_cast<long>(scaledWidth),
-            static_cast<long>(scaledHeight),
-            static_cast<long>(drawX),
-            static_cast<long>(drawY),
-            tft.width(),
-            tft.height()
-        );
-    }
+    // LovyanGFX JPEG scaling is most predictable when we give drawJpg()
+    // an explicit top-left destination. Using middle_center together with
+    // scaled JPEGs can shift the image depending on decoder/datum handling.
+    const int scaledWidth = std::max(1, static_cast<int>(width * scale + 0.5f));
+    const int scaledHeight = std::max(1, static_cast<int>(height * scale + 0.5f));
+    const int drawX = (static_cast<int>(tft.width()) - scaledWidth) / 2;
+    const int drawY = (static_cast<int>(tft.height()) - scaledHeight) / 2;
 
     bool drawn = false;
 
@@ -323,7 +293,6 @@ bool advanceVideo() {
     }
 
     hasFrame = true;
-    ++decodedFrames;
 
     // Frame pacing. Do not try to catch up by decoding many frames at once.
     nextFrameAt += kFrameIntervalMs;

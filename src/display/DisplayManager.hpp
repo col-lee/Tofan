@@ -14,6 +14,24 @@ namespace ui {
 
 enum class SettingsPage { Root, Display, Network, Sound, Voice };
 
+enum class PetMood {
+    Neutral,
+    Happy,
+    Curious,
+    Sleepy,
+    Tired,
+    Listening,
+    Surprised,
+    Playful,
+    Shy,
+    Thinking,
+    Grumpy,
+    Dizzy,
+    Proud,
+    Excited,
+    Dancing
+};
+
 enum class State {
     BOOT_LOADING,
     HOME_MENU,
@@ -77,24 +95,13 @@ public:
     bool isAdminModeOn = false;
     bool isWiFiOn = false;
 
-    float petPulse = 0.0;     // สำหรับทำให้ "หายใจ" (ขยาย/ยุบ)
-    float petYOffset = 0.0;   // สำหรับทำให้ "ลอยขึ้นลง"
-
-    int petMood = 0;
-
+    // AI Pet state. Its palette is intentionally independent from the UI theme.
+    ui::PetMood petMood = ui::PetMood::Neutral;
+    char petMessage[36] = "hi~";
+    unsigned long petMoodUntil = 0;
     unsigned long lastMoodChange = 0;
-
-    // ตัวแปร Lerp อารมณ์
-    float cur_r = 255, cur_g = 255, cur_b = 255;
-    float cur_eyeW = 12, cur_eyeH_L = 16, cur_eyeH_R = 16, cur_eyeY = -5; // ปรับขนาดตาให้เป็นสี่เหลี่ยมแนวตั้ง
-    float cur_mouthW = 10, cur_mouthH = 4, cur_mouthY = 14, cur_mouthX = 0;
-
-    // Current and target gaze positions for interpolation.
-    float cur_gazeX = 0, cur_gazeY = 0;
-    float tar_gazeX = 0, tar_gazeY = 0;
-
-    unsigned long nextBlinkTime = 0;
-    unsigned long nextGazeTime = 0; // เวลาที่จะเปลี่ยนจุดมองครั้งต่อไป
+    float petVoiceLevel = 0.0f;
+    uint32_t petInteractionCount = 0;
 
     // Recording timer variables (used by recorde() function)
     long seconds = 0;
@@ -152,6 +159,9 @@ public:
     void drawSettings(bool pushToScreen = true);
 
     void drawAIPet(bool pushToScreen = true);
+    void setPetMood(ui::PetMood mood, const char* message = nullptr, unsigned long holdMs = 0);
+    bool isPetMoodHeld() const;
+    void setPetVoiceLevel(float level);
     void debug();
     void recorde();
 private:

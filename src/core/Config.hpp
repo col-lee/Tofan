@@ -51,7 +51,7 @@
 #define RGB_LED_BRIGHTNESS  32
 #define RGB_LED_INTERVAL_MS 20
 
-#define TASK_STACK_AUDIO      (6 * 1024)
+#define TASK_STACK_AUDIO      (16 * 1024)
 #define TASK_STACK_NETWORK    (4 * 1024)
 #define TASK_STACK_DISPLAY    (4 * 1024)
 

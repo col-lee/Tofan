@@ -1,78 +1,4 @@
-/*!
-gifenc/LICENSE.md
-The MIT License (MIT)
-Copyright (c) 2017 Matt DesLauriers
-
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
-EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
-MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
-IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM,
-DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
-OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE
-OR OTHER DEALINGS IN THE SOFTWARE.
-
-
-
-gifuct-js/LICENSE
-The MIT License (MIT)
-
-Copyright (c) 2015 Matt Way
-
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
-
-
-
-js-binary-schema-parser/LICENSE
-The MIT License (MIT)
-
-Copyright (c) 2015 Matt Way
-
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
-
-
-*/
+// ToFan portal bundle generated from local modules.
 const __model=(()=>{
 const widgets = {network:'เครือข่าย',storage:'พื้นที่จัดเก็บ',music:'กำลังเล่น',volume:'ระดับเสียง',voice:'Voice assistant',system:'ระบบ'};
 const snapWidth=n=>Math.max(3,Math.min(12,Math.round((Number(n)||6)/3)*3));
@@ -92,8 +18,9 @@ function dimensions(w,h){return Number.isInteger(w)&&Number.isInteger(h)&&w>0&&h
 const bytes=n=>n>=1073741824?`${(n/1073741824).toFixed(1)} GB`:n>=1048576?`${(n/1048576).toFixed(1)} MB`:n>=1024?`${(n/1024).toFixed(1)} KB`:`${n||0} B`;
 const time=n=>`${Math.floor((n||0)/60).toString().padStart(2,'0')}:${((n||0)%60).toString().padStart(2,'0')}`;
 
-return {widgets,snapWidth,snapHeight,defaults,layout,rect,dimensions,bytes,time};
+return {widgets,defaults,layout,rect,dimensions,bytes,time,snapWidth,snapHeight};
 })();
+const {widgets,defaults,layout,rect,dimensions,bytes,time,snapWidth,snapHeight}=__model;
 const __components=(()=>{
 // Local, accessible dialogs and controls; no browser alert/confirm/prompt.
 function modal(message,{title='ยืนยันการทำรายการ',value,confirm='ยืนยัน',cancel='ยกเลิก'}={}) {
@@ -136,9 +63,11 @@ function enhanceControls(root=document){
 let validationOpen=false;
 document.addEventListener('invalid',async e=>{e.preventDefault();if(validationOpen)return;validationOpen=true;await modal(e.target.validationMessage,{title:'ตรวจสอบข้อมูลอีกนิด',confirm:'ตกลง',cancel:'ปิด'});validationOpen=false;if(e.target.isConnected){const focus=e.target.classList.contains('native-control')?e.target.nextElementSibling?.querySelector('button')||e.target.nextElementSibling:e.target;focus?.focus();}},true);
 
-return {modal,ask,requestName,enhanceControls};
+return {ask,requestName,enhanceControls};
 })();
-const __dashboard=(({bytes,time})=>{
+const {ask,requestName,enhanceControls}=__components;
+const __dashboard=(()=>{
+const {bytes,time}=__model;
 const safe=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const percent=n=>Number.isFinite(n)?Math.max(0,Math.min(100,n)):0;
 const metric=(value,sub)=>`<div class="metric">${safe(value)}</div><small>${safe(sub)}</small>`;
@@ -156,15 +85,14 @@ function widgetContent(id,s){switch(id){
  default:return '';
 }}
 
-return {recordStatus,widgetContent};
-})(__model);
-const {widgets,defaults,layout,rect,dimensions,bytes,time,snapWidth,snapHeight}=__model;
-const {ask,requestName,enhanceControls}=__components;
+return {widgetContent,recordStatus};
+})();
 const {widgetContent,recordStatus}=__dashboard;
+(()=>{
 const $=(s,root=document)=>root.querySelector(s),$$=(s,root=document)=>[...root.querySelectorAll(s)];
 const escape=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const pages={dashboard:['ภาพรวม','พื้นที่ของคุณ จัดวางในแบบที่ชอบ'],files:['ไฟล์และมีเดีย','เตรียมภาพให้พอดีกับจอ ทุกขั้นตอนอยู่ในเบราว์เซอร์ของคุณ'],wifi:['WiFi Manager','เชื่อมต่อและจัดการเครือข่ายของอุปกรณ์'],settings:['การตั้งค่า','สี เสียง และการทำงานที่เป็นคุณ'],ai:['AI conversation','ตั้งค่าบริการสนทนาที่อุปกรณ์ใช้งาน'],ota:['อัปเดตเฟิร์มแวร์','อัปเดตจากไฟล์หรือลิงก์โดยตรง'],account:['บัญชี','จัดการการเข้าถึงอุปกรณ์']};
-let token=sessionStorage.getItem('tofan-session')||'',status={},blocks=defaults(),page='',polling=false,worker=null,original=null,processed=null,previewURL='',previewImage=null,xhr=null,videoCancel=false;
+let token=sessionStorage.getItem('tofan-session')||'',status={},blocks=defaults(),page='',polling=false,worker=null,original=null,processed=null,previewURL='',previewImage=null,xhr=null,videoProcessing=false,videoProcessCancelled=false;
 let panX=0,panY=0,blockKey='tofan-layout',layoutLoaded=false;
 function notice(text,error=false){const n=$('#notice');n.hidden=!text;n.replaceChildren();n.className=error?'error':'';if(!text)return;const message=document.createElement('span');message.textContent=text;const close=document.createElement('button');close.type='button';close.textContent='×';close.setAttribute('aria-label','ปิดการแจ้งเตือน');close.onclick=()=>n.hidden=true;n.append(message,close);}
 
@@ -181,7 +109,7 @@ function applyWebTheme(){
  status.settings?.colors?.forEach(([h,s,v],i)=>{s/=100;v/=100;const f=n=>{const k=(n+h/60)%6;return Math.round(255*(v-v*s*Math.max(0,Math.min(k,4-k,1))));};const rgb=[f(5),f(3),f(1)];document.documentElement.style.setProperty(names[i],`rgb(${rgb.join(',')})`);if(i===3)document.documentElement.style.setProperty('--button-text',(rgb[0]*299+rgb[1]*587+rgb[2]*114)>145000?'#243b31':'#ffffff');});
 }
 function saveLayout(){try{localStorage.setItem(blockKey,JSON.stringify(blocks));}catch{notice('เบราว์เซอร์ไม่อนุญาตให้จดจำ layout',true);}}
-function render(){if(!token)return;videoCancel=true;if(worker){worker.terminate();worker=null;}if(previewURL){URL.revokeObjectURL(previewURL);previewURL='';}original=processed=previewImage=null;page=location.hash.slice(1);if(!pages[page])page='dashboard';$('nav').innerHTML=Object.entries(pages).map(([id,[name]])=>`<a href="#${id}" class="${page===id?'active':''}" ${page===id?'aria-current="page"':''}>${name}</a>`).join('');$('#pageTitle').textContent=pages[page][0];$('#subtitle').textContent=pages[page][1];notice('');({dashboard,files,wifi,settings,ai,ota,account}[page])();enhanceControls();}
+function render(){if(!token)return;videoProcessCancelled=true;if(worker){worker.terminate();worker=null;}if(previewURL){URL.revokeObjectURL(previewURL);previewURL='';}original=processed=previewImage=null;page=location.hash.slice(1);if(!pages[page])page='dashboard';$('nav').innerHTML=Object.entries(pages).map(([id,[name]])=>`<a href="#${id}" class="${page===id?'active':''}" ${page===id?'aria-current="page"':''}>${name}</a>`).join('');$('#pageTitle').textContent=pages[page][0];$('#subtitle').textContent=pages[page][1];notice('');({dashboard,files,wifi,settings,ai,ota,account}[page])();enhanceControls();}
 window.addEventListener('hashchange',render);
 const metric=(value,sub)=>`<div class="metric">${escape(value)}</div><small>${escape(sub)}</small>`;
 function widgetValue(id){return widgetContent(id,status);}
@@ -204,39 +132,60 @@ function ai(){const a=status.ai||{};$('#content').innerHTML=`<form id="aiForm" c
 function account(){$('#content').innerHTML=`<form class="panel" id="accountForm"><h2>เปลี่ยนรหัสผ่าน</h2><label>รหัสผ่านปัจจุบัน<input name="current" type="password" required autocomplete="current-password"></label><label>รหัสผ่านใหม่<input name="password" type="password" minlength="8" maxlength="128" required autocomplete="new-password"></label><button class="primary">บันทึกรหัสผ่านใหม่</button></form><button id="accountLogout">ออกจากระบบ</button>`;$('#accountForm').onsubmit=attempt(async e=>{await api('account',Object.fromEntries(new FormData(e.target)));signout();});$('#accountLogout').onclick=$('#logout').onclick;}
 function upload(path,file,name){if(xhr)return Promise.reject(Error('มีการอัปโหลดอยู่ กรุณารอหรือยกเลิกก่อน'));return new Promise((resolve,reject)=>{xhr=new XMLHttpRequest();xhr.open('POST','/api/'+path);xhr.setRequestHeader('Authorization','Bearer '+token);xhr.setRequestHeader('X-ToFan-Client','portal');xhr.setRequestHeader('X-File-Size',file.size);xhr.timeout=600000;xhr.upload.onprogress=e=>{if($('#transferProgress'))$('#transferProgress').value=e.lengthComputable?e.loaded/e.total*100:0;};const finish=()=>{xhr=null;if($('#cancelUpload'))$('#cancelUpload').hidden=true;};xhr.onload=()=>{const code=xhr.status;let data;try{data=JSON.parse(xhr.responseText);}catch{data={error:'อุปกรณ์ตอบกลับไม่สมบูรณ์'};}finish();code>=200&&code<300?resolve(data):reject(Error(data.error));};xhr.onerror=()=>{finish();reject(Error('การเชื่อมต่อขาด ตรวจสอบอุปกรณ์แล้วลองใหม่'));};xhr.ontimeout=xhr.onerror;xhr.onabort=()=>{finish();reject(Error('ยกเลิกการอัปโหลดแล้ว'));};const form=new FormData();form.append('file',file,name);xhr.send(form);if($('#cancelUpload')){$('#cancelUpload').hidden=false;$('#cancelUpload').onclick=()=>xhr?.abort();}});}
 
-const browserVideo=name=>/\.(mp4|webm|mov|m4v|avi)$/i.test(name||'');
-const rawMjpeg=name=>/\.(mjpeg|mjpg)$/i.test(name||'');
-function once(target,event,timeout=15000){return new Promise((resolve,reject)=>{let timer;const done=(ok,value)=>{clearTimeout(timer);target.removeEventListener(event,onEvent);target.removeEventListener('error',onError);ok?resolve(value):reject(value);};const onEvent=e=>done(true,e),onError=()=>done(false,Error('เบราว์เซอร์เปิดวิดีโอนี้ไม่ได้ ลองใช้ MP4 (H.264) หรือ WebM'));target.addEventListener(event,onEvent,{once:true});target.addEventListener('error',onError,{once:true});timer=setTimeout(()=>done(false,Error('รอข้อมูลวิดีโอนานเกินไป')),timeout);});}
-function canvasJpeg(canvas,quality){return new Promise((resolve,reject)=>canvas.toBlob(blob=>blob?resolve(blob):reject(Error('เข้ารหัส JPEG ไม่สำเร็จ')),'image/jpeg',quality));}
-async function seekVideo(video,time){const safe=Math.max(0,Math.min(time,Math.max(0,video.duration-0.001)));if(Math.abs(video.currentTime-safe)<0.001&&video.readyState>=2)return;const wait=once(video,'seeked',15000);video.currentTime=safe;await wait;}
-function videoRect(sw,sh,dw,dh,mode){const scale=(mode==='cover'?Math.max:Math.min)(dw/sw,dh/sh),w=sw*scale,h=sh*scale;return{x:(dw-w)/2,y:(dh-h)/2,w,h};}
-async function prepareVideoMjpeg(file,opts,onProgress){
- if(!browserVideo(file.name))throw Error('รองรับการแปลงจาก MP4 / WebM / MOV / M4V / AVI ที่เบราว์เซอร์เปิดได้');
- const w=Math.max(1,Math.min(640,Math.round(opts.w||320))),h=Math.max(1,Math.min(480,Math.round(opts.h||240))),fps=Math.max(1,Math.min(20,Math.round(opts.fps||12))),quality=Math.max(.25,Math.min(.95,+opts.quality||.65));
- const url=URL.createObjectURL(file),video=document.createElement('video');video.preload='auto';video.muted=true;video.playsInline=true;video.src=url;
+const sourceVideoRe=/\.(mp4|webm|mov|m4v|avi)$/i;
+const rawMjpegRe=/\.(mjpeg|mjpg)$/i;
+function waitForVideo(video,event,timeout=12000){return new Promise((resolve,reject)=>{let timer;const done=()=>{clearTimeout(timer);video.removeEventListener(event,done);video.removeEventListener('error',fail);resolve();};const fail=()=>{clearTimeout(timer);video.removeEventListener(event,done);video.removeEventListener('error',fail);reject(Error('เบราว์เซอร์ถอดรหัสวิดีโอนี้ไม่ได้ ลอง MP4 H.264 หรือ WebM'));};video.addEventListener(event,done,{once:true});video.addEventListener('error',fail,{once:true});timer=setTimeout(()=>{video.removeEventListener(event,done);video.removeEventListener('error',fail);reject(Error('อ่านวิดีโอนานเกินไป'));},timeout);});}
+async function seekVideo(video,time){if(Math.abs(video.currentTime-time)<.002)return;const ready=waitForVideo(video,'seeked');video.currentTime=time;await ready;}
+function canvasJpeg(canvas,quality){return new Promise((resolve,reject)=>canvas.toBlob(blob=>blob?resolve(blob):reject(Error('สร้าง JPEG frame ไม่สำเร็จ')),'image/jpeg',quality));}
+async function prepareVideo(){
+ if(!original||!sourceVideoRe.test(original.name))throw Error('เลือกไฟล์วิดีโอก่อน');
+ const video=$('#videoPreview');if(!video)throw Error('ไม่พบตัวอย่างวิดีโอ');
+ if(!Number.isFinite(video.duration)||video.duration<=0)throw Error('อ่านระยะเวลาวิดีโอไม่ได้');
+ if(video.duration>120)throw Error('วิดีโอยาวเกิน 2 นาที กรุณาตัดคลิปก่อนอัปโหลดเพื่อไม่ให้เบราว์เซอร์ใช้หน่วยความจำมากเกินไป');
+ const w=Math.max(16,Math.min(640,+$('#videoW').value||status.width||320));
+ const h=Math.max(16,Math.min(480,+$('#videoH').value||status.height||240));
+ const fps=12,quality=Math.max(.35,Math.min(.9,+$('#videoQuality').value||.68));
+ const frameCount=Math.max(1,Math.ceil(video.duration*fps));
+ const canvas=document.createElement('canvas');canvas.width=w;canvas.height=h;const ctx=canvas.getContext('2d',{alpha:false});
+ const parts=[];let total=0,firstFrame=null;videoProcessing=true;videoProcessCancelled=false;
+ $('#processVideo').disabled=true;$('#cancelVideoProcess').hidden=false;$('#uploadPrepared').disabled=true;$('#downloadPrepared').disabled=true;
+ notice(`กำลังแปลงวิดีโอเป็น MJPEG ${w}x${h} @ ${fps} FPS · ไม่มีเสียง`);
  try{
-  if(video.readyState<1)await once(video,'loadedmetadata',20000);if(!Number.isFinite(video.duration)||video.duration<=0)throw Error('อ่านระยะเวลาวิดีโอไม่ได้');if(video.readyState<2)await once(video,'loadeddata',20000);
-  const duration=video.duration,total=Math.max(1,Math.ceil(duration*fps)),canvas=document.createElement('canvas'),ctx=canvas.getContext('2d',{alpha:false});canvas.width=w;canvas.height=h;if(!ctx)throw Error('Canvas ไม่พร้อมใช้งาน');
-  const chunks=[];let totalBytes=0;videoCancel=false;
-  for(let i=0;i<total;i++){
-   if(videoCancel)throw Error('ยกเลิกการบีบอัดแล้ว');const t=Math.min(i/fps,Math.max(0,duration-0.001));await seekVideo(video,t);const r=videoRect(video.videoWidth,video.videoHeight,w,h,opts.mode||'contain');ctx.fillStyle=opts.background||'#000000';ctx.fillRect(0,0,w,h);ctx.drawImage(video,r.x,r.y,r.w,r.h);const jpg=await canvasJpeg(canvas,quality);chunks.push(jpg);totalBytes+=jpg.size;if(totalBytes>256*1048576)throw Error('MJPEG หลังบีบอัดเกิน 256 MB กรุณาลด FPS / ความละเอียด / คุณภาพ');onProgress?.((i+1)/total*100,{frame:i+1,total,bytes:totalBytes});if((i&3)===3)await new Promise(r=>setTimeout(r,0));
+  for(let i=0;i<frameCount;i++){
+   if(videoProcessCancelled)throw Error('ยกเลิกการแปลงวิดีโอแล้ว');
+   const time=Math.min(i/fps,Math.max(0,video.duration-.001));await seekVideo(video,time);
+   ctx.fillStyle='#000';ctx.fillRect(0,0,w,h);
+   const scale=Math.min(w/video.videoWidth,h/video.videoHeight),dw=Math.max(1,Math.round(video.videoWidth*scale)),dh=Math.max(1,Math.round(video.videoHeight*scale));
+   const dx=Math.floor((w-dw)/2),dy=Math.floor((h-dh)/2);ctx.drawImage(video,dx,dy,dw,dh);
+   const jpeg=await canvasJpeg(canvas,quality);if(!firstFrame)firstFrame=jpeg;parts.push(jpeg);total+=jpeg.size;
+   if(total>256*1048576)throw Error('MJPEG ที่ได้มีขนาดเกิน 256 MB ลดความยาวหรือคุณภาพวิดีโอ');
+   if($('#transferProgress'))$('#transferProgress').value=(i+1)/frameCount*100;
+   if((i&7)===7)await new Promise(r=>setTimeout(r,0));
   }
-  return{blob:new Blob(chunks,{type:'application/octet-stream'}),frames:total,duration,w,h,fps,quality};
- } finally{video.pause();video.removeAttribute('src');video.load();URL.revokeObjectURL(url);}
+  processed=new Blob(parts,{type:'video/x-motion-jpeg'});
+  const name=original.name.replace(/\.[^.]+$/,'')+'.mjpeg';$('#uploadName').value=name;
+  $('#sizeInfo').textContent=`${bytes(original.size)} → ${bytes(processed.size)} · ${w}×${h} · ${fps} FPS · audio removed`;
+  $('#uploadPrepared').disabled=false;$('#downloadPrepared').disabled=false;$('#uploadPrepared').textContent='อัปโหลด MJPEG ที่เตรียมแล้ว';
+  if(firstFrame){const url=URL.createObjectURL(firstFrame),img=new Image();img.src=url;img.className='preview';img.alt='เฟรมแรกของ MJPEG';img.onload=()=>URL.revokeObjectURL(url);$('#prepared').replaceChildren(img);}
+  notice('แปลงวิดีโอเป็น MJPEG เรียบร้อย พร้อมอัปโหลดไป ToFan');return processed;
+ }finally{videoProcessing=false;if($('#processVideo'))$('#processVideo').disabled=false;if($('#cancelVideoProcess'))$('#cancelVideoProcess').hidden=true;}
 }
 
-function files(){$('#content').innerHTML=`<div class="two"><section class="panel"><span class="badge">LOCAL MEDIA STUDIO</span><h2>พร้อมสำหรับจอเล็ก</h2><label class="drop">เลือกภาพ เพลง หรือวิดีโอ<input id="mediaInput" type="file" accept=".jpg,.jpeg,.png,.gif,.mp3,.wav,.aac,.m4a,.flac,.mp4,.webm,.mov,.m4v,.avi,.mjpeg,.mjpg"></label><div id="editor" hidden><canvas id="cropPreview" class="preview" width="320" height="240"></canvas><p class="hint">ลากภาพเพื่อจัดตำแหน่ง · GIF แสดงเฟรมแรกในพื้นที่ครอป</p><div class="two"><label>กว้าง (px)<input id="outW" type="number" min="1" max="4096" value="${status.width||320}"></label><label>สูง (px)<input id="outH" type="number" min="1" max="4096" value="${status.height||240}"></label></div><div class="row"><button id="screenSize">พอดีจอ</button><button id="resetCrop">รีเซ็ตตำแหน่ง</button></div><label>จัดวาง<select id="cropMode"><option value="cover">ครอปให้เต็มจอ</option><option value="contain">เห็นทั้งภาพ พร้อมขอบ</option></select></label><label>ซูม<input id="zoom" type="range" min="1" max="4" step=".01" value="1"></label><div class="two"><label>สีขอบ<input id="background" type="color" value="#edf2ee"></label><label>ชนิดไฟล์<select id="format"><option value="jpeg">JPEG</option><option value="png">PNG</option><option value="gif">GIF · คงภาพเคลื่อนไหว</option></select></label></div><label>คุณภาพ / จำนวนสี GIF<input id="quality" type="range" min=".1" max="1" step=".01" value=".85"></label><label>ขนาดเป้าหมาย (KB, ไม่บังคับ)<input id="target" type="number" min="1" placeholder="เช่น 100"></label><p class="hint">JPEG ปรับคุณภาพให้ใกล้ขนาดเป้าหมาย · PNG บีบอัดแบบไม่สูญเสีย · GIF ปรับจำนวนสี; อาจยังเกินขนาดที่เลือก</p><button id="process" class="primary">ครอปและบีบอัดในเครื่องนี้</button><button id="cancelProcess" hidden>ยกเลิก</button></div><div id="videoEditor" hidden><p class="hint">วิดีโอจะถูกแปลงและบีบอัดเป็น raw MJPEG ในเบราว์เซอร์ก่อนส่งเข้า ESP32 จึงไม่ใช้ CPU ของบอร์ดในการแปลงไฟล์</p><div class="two"><label>กว้าง (px)<input id="videoW" type="number" min="16" max="640" value="${status.width||320}"></label><label>สูง (px)<input id="videoH" type="number" min="16" max="480" value="${status.height||240}"></label></div><div class="two"><label>FPS<input id="videoFps" type="number" min="1" max="20" value="12"></label><label>คุณภาพ JPEG<input id="videoQuality" type="range" min=".25" max=".95" step=".05" value=".65"></label></div><label>จัดวาง<select id="videoMode"><option value="contain">เห็นครบทั้งภาพ + ขอบดำ</option><option value="cover">ครอปให้เต็มจอ</option></select></label><button id="processVideo" class="primary">บีบอัดเป็น MJPEG</button><button id="cancelVideo" hidden>ยกเลิก</button><p class="hint">แนะนำ 320×240, 12 FPS, quality 0.60–0.70 สำหรับ ESP32-S3; เสียงจะไม่ถูกใส่ใน MJPEG</p></div><div id="prepared"></div><div id="uploadOptions" hidden><label>ชื่อไฟล์<input id="uploadName" maxlength="120"></label><p id="sizeInfo" class="hint"></p><button id="uploadPrepared" class="primary">อัปโหลดไฟล์ที่เตรียมแล้ว</button><button id="uploadOriginal">อัปโหลดต้นฉบับ</button><button id="downloadPrepared">ดาวน์โหลดไฟล์ที่เตรียม</button></div><progress id="transferProgress" max="100" value="0"></progress><button id="cancelUpload" hidden>ยกเลิกอัปโหลด</button><p class="hint">มีเดียไม่ถูกส่งออกไปไหนระหว่างการเตรียมไฟล์ การแปลง MJPEG ทำในเบราว์เซอร์และส่งตรงเข้า ToFan เมื่อกดอัปโหลด</p></section><section class="panel"><div class="toolbar"><h2>ไฟล์บน SD</h2><button id="refreshFiles">↻ โหลดใหม่</button></div><label>โฟลเดอร์<select id="directory"><option value="Pictures">รูปภาพ</option><option value="Musics">เพลง</option><option value="Videos">วิดีโอ</option></select></label><div id="fileList" class="empty">กำลังโหลด…</div><p class="hint">จอ TFT เล่น raw MJPEG (.mjpeg/.mjpg) · เลือก MP4/WebM/MOV แล้วกด “บีบอัด + อัปโหลด MJPEG” เพื่อแปลงเป็น 320×240 / 12 FPS ก่อนส่ง</p></section></div>`;
- $('#mediaInput').onchange=attempt(async e=>{invalidate();videoCancel=true;original=e.target.files[0];processed=null;panX=panY=0;if(!original)return;$('#uploadOptions').hidden=false;$('#uploadName').value=original.name;$('#sizeInfo').textContent=`ต้นฉบับ ${bytes(original.size)}`;$('#uploadPrepared').disabled=true;$('#downloadPrepared').disabled=true;$('#prepared').replaceChildren();const isImage=/\.(jpe?g|png|gif)$/i.test(original.name),isVideo=browserVideo(original.name),isMjpeg=rawMjpeg(original.name);$('#editor').hidden=!isImage;$('#videoEditor').hidden=!isVideo;$('#uploadPrepared').textContent=isVideo?'บีบอัด + อัปโหลด MJPEG':'อัปโหลดไฟล์ที่เตรียมแล้ว';$('#uploadOriginal').textContent=isVideo?'อัปโหลดต้นฉบับ (TFT จะไม่เล่น)':'อัปโหลดต้นฉบับ';if(previewURL)URL.revokeObjectURL(previewURL);previewURL=URL.createObjectURL(original);if(isImage){previewImage=new Image();previewImage.src=previewURL;await previewImage.decode();$('#format').value=/\.gif$/i.test(original.name)?'gif':'jpeg';$('#format option[value=gif]').disabled=!/\.gif$/i.test(original.name);drawCrop();}else{previewImage=null;if(isVideo){const v=document.createElement('video');v.controls=true;v.muted=true;v.playsInline=true;v.className='preview';v.src=previewURL;$('#prepared').append(v);$('#uploadPrepared').disabled=false;}else if(isMjpeg){const p=document.createElement('p');p.className='hint';p.textContent='ไฟล์ raw MJPEG พร้อมอัปโหลดและเล่นบน TFT; การบีบอัดอัตโนมัติใช้กับ MP4/WebM/MOV/M4V/AVI ที่เบราว์เซอร์ถอดรหัสได้';$('#prepared').append(p);}}if(original.size>8*1048576)notice('ไฟล์มีขนาดใหญ่ การแปลงวิดีโอจะทำในเบราว์เซอร์ก่อนส่ง เพื่อลดข้อมูลที่อัปโหลดเข้า ToFan');});
+function files(){$('#content').innerHTML=`<div class="two"><section class="panel"><span class="badge">LOCAL MEDIA STUDIO</span><h2>พร้อมสำหรับจอเล็ก</h2><label class="drop">เลือกภาพ เพลง หรือวิดีโอ<input id="mediaInput" type="file" accept=".jpg,.jpeg,.png,.gif,.mp3,.wav,.aac,.m4a,.flac,.mp4,.webm,.mov,.m4v,.avi,.mjpeg,.mjpg"></label><div id="editor" hidden><canvas id="cropPreview" class="preview" width="320" height="240"></canvas><p class="hint">ลากภาพเพื่อจัดตำแหน่ง · GIF แสดงเฟรมแรกในพื้นที่ครอป</p><div class="two"><label>กว้าง (px)<input id="outW" type="number" min="1" max="4096" value="${status.width||320}"></label><label>สูง (px)<input id="outH" type="number" min="1" max="4096" value="${status.height||240}"></label></div><div class="row"><button id="screenSize">พอดีจอ</button><button id="resetCrop">รีเซ็ตตำแหน่ง</button></div><label>จัดวาง<select id="cropMode"><option value="cover">ครอปให้เต็มจอ</option><option value="contain">เห็นทั้งภาพ พร้อมขอบ</option></select></label><label>ซูม<input id="zoom" type="range" min="1" max="4" step=".01" value="1"></label><div class="two"><label>สีขอบ<input id="background" type="color" value="#edf2ee"></label><label>ชนิดไฟล์<select id="format"><option value="jpeg">JPEG</option><option value="png">PNG</option><option value="gif">GIF · คงภาพเคลื่อนไหว</option></select></label></div><label>คุณภาพ / จำนวนสี GIF<input id="quality" type="range" min=".1" max="1" step=".01" value=".85"></label><label>ขนาดเป้าหมาย (KB, ไม่บังคับ)<input id="target" type="number" min="1" placeholder="เช่น 100"></label><p class="hint">JPEG ปรับคุณภาพให้ใกล้ขนาดเป้าหมาย · PNG บีบอัดแบบไม่สูญเสีย · GIF ปรับจำนวนสี</p><button id="process" class="primary">ครอปและบีบอัดในเครื่องนี้</button><button id="cancelProcess" hidden>ยกเลิก</button></div><div id="videoEditor" hidden><video id="videoPreview" class="preview" controls muted playsinline></video><p class="hint">วิดีโอจะถูกถอดเสียงออก แล้วแปลงในเบราว์เซอร์เป็น Raw MJPEG 12 FPS ก่อนส่งเข้า ToFan</p><div class="two"><label>กว้าง (px)<input id="videoW" type="number" min="16" max="640" value="${status.width||320}"></label><label>สูง (px)<input id="videoH" type="number" min="16" max="480" value="${status.height||240}"></label></div><label>คุณภาพ JPEG ต่อเฟรม<input id="videoQuality" type="range" min=".35" max=".9" step=".01" value=".68"></label><p class="hint">ระบบจัดวิดีโอไว้กลางเฟรมและเติมขอบดำอัตโนมัติ · รองรับคลิปไม่เกิน 2 นาทีเพื่อควบคุม RAM ของเบราว์เซอร์</p><button id="processVideo" class="primary">แปลงเป็น MJPEG</button><button id="cancelVideoProcess" hidden>ยกเลิกการแปลง</button></div><div id="prepared"></div><div id="uploadOptions" hidden><label>ชื่อไฟล์<input id="uploadName" maxlength="120"></label><p id="sizeInfo" class="hint"></p><button id="uploadPrepared" class="primary">อัปโหลดไฟล์ที่เตรียมแล้ว</button><button id="uploadOriginal">อัปโหลดต้นฉบับ</button><button id="downloadPrepared">ดาวน์โหลดไฟล์ที่เตรียม</button></div><progress id="transferProgress" max="100" value="0"></progress><button id="cancelUpload" hidden>ยกเลิกอัปโหลด</button><p class="hint">การบีบอัดภาพ/วิดีโอทำในเบราว์เซอร์ และส่งตรงเข้า ToFan เท่านั้น</p></section><section class="panel"><div class="toolbar"><h2>ไฟล์บน SD</h2><button id="refreshFiles">↻ โหลดใหม่</button></div><label>โฟลเดอร์<select id="directory"><option value="Pictures">รูปภาพ</option><option value="Musics">เพลง</option><option value="Videos">วิดีโอ</option></select></label><div id="fileList" class="empty">กำลังโหลด…</div><p class="hint">จอ TFT เล่นไฟล์ Raw MJPEG (.mjpeg/.mjpg) จากโฟลเดอร์ Videos ได้โดยตรง</p></section></div>`;
+ $('#mediaInput').onchange=attempt(async e=>{invalidate();original=e.target.files[0];processed=null;panX=panY=0;if(!original)return;const isImage=/\.(jpe?g|png|gif)$/i.test(original.name),isVideo=sourceVideoRe.test(original.name),isRaw=rawMjpegRe.test(original.name);$('#uploadOptions').hidden=false;$('#editor').hidden=!isImage;$('#videoEditor').hidden=!isVideo;$('#prepared').replaceChildren();$('#uploadOriginal').hidden=isVideo;$('#uploadPrepared').disabled=true;$('#downloadPrepared').disabled=true;$('#uploadPrepared').textContent=isVideo?'แปลงและอัปโหลด MJPEG':'อัปโหลดไฟล์ที่เตรียมแล้ว';$('#uploadName').value=isVideo?original.name.replace(/\.[^.]+$/,'')+'.mjpeg':original.name;$('#sizeInfo').textContent=`ต้นฉบับ ${bytes(original.size)}`;if(previewURL)URL.revokeObjectURL(previewURL);previewURL=URL.createObjectURL(original);
+  if(isImage){previewImage=new Image();previewImage.src=previewURL;await previewImage.decode();$('#format').value=/\.gif$/i.test(original.name)?'gif':'jpeg';$('#format option[value=gif]').disabled=!/\.gif$/i.test(original.name);drawCrop();}
+  else{previewImage=null;if(isVideo){const v=$('#videoPreview');v.src=previewURL;v.load();if(v.readyState<1)await waitForVideo(v,'loadedmetadata');$('#uploadPrepared').disabled=false;$('#videoW').value=status.width||320;$('#videoH').value=status.height||240;notice(`พร้อมแปลง ${videoTime(v.duration)} เป็น MJPEG 12 FPS · เสียงจะไม่ถูกนำไปด้วย`);}else if(isRaw){processed=original;$('#uploadPrepared').disabled=false;$('#downloadPrepared').disabled=false;$('#uploadPrepared').textContent='อัปโหลด MJPEG';notice('ไฟล์นี้เป็น MJPEG อยู่แล้ว ไม่ต้องแปลงซ้ำ');}}
+  if(original.size>8*1048576&&!isVideo)notice('ไฟล์มีขนาดใหญ่ อาจใช้เวลานานหรืออัปโหลดล้มเหลว แนะนำลดขนาดและรักษาการเชื่อมต่อ WiFi');});
  for(const id of ['outW','outH','cropMode','zoom','background'])$('#'+id).oninput=()=>{invalidate();drawCrop();};for(const id of ['format','quality','target'])$('#'+id).oninput=invalidate;
+ for(const id of ['videoW','videoH','videoQuality'])$('#'+id).oninput=()=>{if(!sourceVideoRe.test(original?.name||''))return;processed=null;videoProcessCancelled=true;$('#uploadPrepared').disabled=false;$('#downloadPrepared').disabled=true;$('#uploadPrepared').textContent='แปลงและอัปโหลด MJPEG';};
  $('#screenSize').onclick=()=>{$('#outW').value=status.width||320;$('#outH').value=status.height||240;invalidate();drawCrop();};$('#resetCrop').onclick=()=>{panX=panY=0;$('#zoom').value=1;invalidate();drawCrop();};
- const videoOptions=()=>({w:+$('#videoW').value,h:+$('#videoH').value,fps:+$('#videoFps').value,quality:+$('#videoQuality').value,mode:$('#videoMode').value,background:'#000000'});
- async function processSelectedVideo(){if(!original||!browserVideo(original.name))throw Error('เลือกวิดีโอที่เบราว์เซอร์รองรับก่อน');$('#processVideo').disabled=true;$('#cancelVideo').hidden=false;$('#uploadPrepared').disabled=true;videoCancel=false;try{const result=await prepareVideoMjpeg(original,videoOptions(),(progress,info)=>{$('#transferProgress').value=progress;$('#sizeInfo').textContent=`กำลังบีบอัด ${info.frame}/${info.total} เฟรม · ${bytes(info.bytes)}`;});processed=result.blob;const name=original.name.replace(/\.[^.]+$/,'')+'.mjpeg';$('#uploadName').value=name;$('#sizeInfo').textContent=`${bytes(original.size)} → ${bytes(processed.size)} · ${result.w}×${result.h} · ${result.fps} FPS · ${result.frames} เฟรม`;$('#downloadPrepared').disabled=false;$('#uploadPrepared').disabled=false;$('#prepared .mjpeg-ready')?.remove();const note=document.createElement('p');note.className='hint mjpeg-ready';note.textContent='MJPEG พร้อมแล้ว · '+result.w+'×'+result.h+' · '+result.fps+' FPS · '+bytes(processed.size);$('#prepared').append(note);notice('บีบอัดวิดีโอเป็น MJPEG เรียบร้อย ยังไม่ได้อัปโหลด');return processed;}finally{$('#processVideo').disabled=false;$('#cancelVideo').hidden=true;}}
- $('#processVideo').onclick=attempt(processSelectedVideo);$('#cancelVideo').onclick=()=>{videoCancel=true;notice('กำลังยกเลิกการบีบอัด…');};for(const id of ['videoW','videoH','videoFps','videoQuality','videoMode'])$('#'+id).oninput=()=>{videoCancel=true;if(processed){processed=null;$('#downloadPrepared').disabled=true;$('#prepared .mjpeg-ready')?.remove();}$('#uploadPrepared').disabled=false;};
  const cv=$('#cropPreview');cv.onpointerdown=e=>{cv.setPointerCapture(e.pointerId);const x=e.clientX,y=e.clientY,px=panX,py=panY;cv.onpointermove=e=>{panX=Math.max(-1,Math.min(1,px+(e.clientX-x)/cv.clientWidth*2));panY=Math.max(-1,Math.min(1,py+(e.clientY-y)/cv.clientHeight*2));invalidate();drawCrop();};};cv.onpointerup=()=>cv.onpointermove=null;
  $('#process').onclick=attempt(async()=>{if(!original)return;if(!window.Worker||!window.OffscreenCanvas)throw Error('เบราว์เซอร์นี้ไม่รองรับการประมวลผลภาพ ใช้ Chrome/Edge รุ่นใหม่ หรืออัปโหลดต้นฉบับ');if(worker)worker.terminate();worker=new Worker('/image-worker.js',{type:'module'});$('#process').disabled=true;$('#cancelProcess').hidden=false;const finish=()=>{worker?.terminate();worker=null;if($('#process')){$('#process').disabled=false;$('#cancelProcess').hidden=true;}};worker.onerror=e=>{notice('ประมวลผลไม่สำเร็จ: '+e.message,true);finish();};worker.onmessage=({data})=>{if(data.progress){$('#transferProgress').value=data.progress;return;}finish();if(data.error){notice(data.error,true);return;}processed=data.blob;const ext=processed.type.split('/')[1];$('#uploadName').value=original.name.replace(/\.[^.]+$/,'')+'.'+ext;$('#sizeInfo').textContent=`${bytes(original.size)} → ${bytes(processed.size)}`;$('#uploadPrepared').disabled=false;$('#downloadPrepared').disabled=false;if(previewURL)URL.revokeObjectURL(previewURL);previewURL=URL.createObjectURL(processed);const img=new Image();img.src=previewURL;img.className='preview';img.alt='ภาพหลังประมวลผล';$('#prepared').replaceChildren(img);notice(data.warning||'เตรียมภาพเรียบร้อย ยังไม่ได้อัปโหลด');};worker.postMessage({file:original,options:options()});$('#cancelProcess').onclick=()=>{finish();notice('ยกเลิกการประมวลผลแล้ว');};});
- $('#uploadPrepared').onclick=attempt(async()=>{if(original&&browserVideo(original.name)&&!processed)await processSelectedVideo();await sendMedia(processed,$('#uploadName').value);});$('#uploadOriginal').onclick=attempt(()=>sendMedia(original,processed?original.name:$('#uploadName').value));$('#downloadPrepared').onclick=()=>download(processed,$('#uploadName').value);$('#refreshFiles').onclick=attempt(loadFiles);$('#directory').onchange=attempt(loadFiles);loadFiles().catch(e=>notice(e.message,true));}
+ $('#processVideo').onclick=attempt(()=>prepareVideo());$('#cancelVideoProcess').onclick=()=>{videoProcessCancelled=true;notice('กำลังหยุดการแปลงวิดีโอ...');};
+ $('#uploadPrepared').onclick=attempt(async()=>{if(sourceVideoRe.test(original?.name||'')&&!processed)await prepareVideo();await sendMedia(processed,$('#uploadName').value);});$('#uploadOriginal').onclick=attempt(()=>sendMedia(original,processed?original.name:$('#uploadName').value));$('#downloadPrepared').onclick=()=>download(processed,$('#uploadName').value);$('#refreshFiles').onclick=attempt(loadFiles);$('#directory').onchange=attempt(loadFiles);loadFiles().catch(e=>notice(e.message,true));}
+function videoTime(seconds){if(!Number.isFinite(seconds))return 'วิดีโอ';const m=Math.floor(seconds/60),s=Math.round(seconds%60).toString().padStart(2,'0');return `${m}:${s}`;}
 function options(){return{w:+$('#outW').value,h:+$('#outH').value,mode:$('#cropMode').value,zoom:+$('#zoom').value,panX,panY,background:$('#background').value,format:$('#format').value,quality:+$('#quality').value,target:+$('#target').value*1024};}
-function invalidate(){processed=null;videoCancel=true;if($('#uploadPrepared')){$('#uploadPrepared').disabled=true;$('#downloadPrepared').disabled=true;}if(worker){worker.terminate();worker=null;$('#process').disabled=false;$('#cancelProcess').hidden=true;}}
+function invalidate(){processed=null;videoProcessCancelled=true;if($('#uploadPrepared')){$('#uploadPrepared').disabled=true;$('#downloadPrepared').disabled=true;}if(worker){worker.terminate();worker=null;$('#process').disabled=false;$('#cancelProcess').hidden=true;}}
 function drawCrop(){if(!previewImage)return;const o=options();if(!dimensions(o.w,o.h))return;const cv=$('#cropPreview');cv.width=o.w;cv.height=o.h;const ctx=cv.getContext('2d'),r=rect(previewImage.naturalWidth,previewImage.naturalHeight,o.w,o.h,o.mode,o.zoom,o.panX,o.panY);ctx.fillStyle=o.background;ctx.fillRect(0,0,o.w,o.h);ctx.drawImage(previewImage,r.x,r.y,r.width,r.height);}
 function download(blob,name){if(!blob)return;const url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);}
 async function sendMedia(file,name){if(!file)throw Error('เลือกและเตรียมไฟล์ก่อน');if(file.size>256*1048576)throw Error('ไฟล์ต้องไม่เกิน 256 MB');if(file.size>8*1048576&&!await ask(`ไฟล์ขนาด ${bytes(file.size)} อาจใช้เวลานานหรืออัปโหลดล้มเหลว ต้องการส่งต่อหรือไม่?`))return;const dir=/\.(jpe?g|png|gif)$/i.test(name)?'Pictures':/\.(mp3|wav|aac|m4a|flac)$/i.test(name)?'Musics':'Videos';await upload(`upload?${new URLSearchParams({dir,name})}`,file,name);notice('บันทึกไฟล์เรียบร้อย');if($('#directory')){$('#directory').value=dir;await loadFiles();}}
@@ -247,3 +196,4 @@ boot().catch(e=>notice(e.message,true));
 
 document.body.append($('#notice'));
 
+})();
