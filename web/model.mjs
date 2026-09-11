@@ -15,3 +15,18 @@ export function rect(sw,sh,w,h,mode='cover',zoom=1,panX=0,panY=0){
 export function dimensions(w,h){return Number.isInteger(w)&&Number.isInteger(h)&&w>0&&h>0&&w<=4096&&h<=4096&&w*h<=4194304;}
 export const bytes=n=>n>=1073741824?`${(n/1073741824).toFixed(1)} GB`:n>=1048576?`${(n/1048576).toFixed(1)} MB`:n>=1024?`${(n/1024).toFixed(1)} KB`:`${n||0} B`;
 export const time=n=>`${Math.floor((n||0)/60).toString().padStart(2,'0')}:${((n||0)%60).toString().padStart(2,'0')}`;
+
+export const playableAudio=name=>/\.(mp3|wav|aac|m4a|flac)$/i.test(String(name||''));
+export function mediaDirectory(name){
+ const value=String(name||'');
+ if(/\.(jpe?g|png|gif)$/i.test(value))return 'Pictures';
+ if(playableAudio(value))return 'Musics';
+ if(/\.(mp4|webm|mov|m4v|avi|mjpeg|mjpg)$/i.test(value))return 'Videos';
+ return 'Files';
+}
+export function directAudioNameFromUrl(value){
+ try{const u=new URL(value);const part=decodeURIComponent(u.pathname.split('/').pop()||'').trim();return playableAudio(part)?part:'';}catch{return '';}
+}
+export function blockedYouTubeUrl(value){
+ try{const host=new URL(value).hostname.toLowerCase();return host==='youtu.be'||host.endsWith('.youtu.be')||host==='youtube.com'||host.endsWith('.youtube.com')||host.endsWith('.youtube-nocookie.com')||host.endsWith('.googlevideo.com');}catch{return false;}
+}

@@ -11,14 +11,14 @@ namespace {
 // ESP32-S3 N16R8 has PSRAM, so keep one compressed JPEG frame there.
 // 512 KiB gives enough headroom for most 320x240 / 640x480 MJPEG frames.
 constexpr size_t kFrameCapacity = 512 * 1024;
-constexpr size_t kReadBufferSize = 8 * 1024;
+constexpr size_t kReadBufferSize = 128 * 1024;
 constexpr uint32_t kVideoFps = 12;
 constexpr uint32_t kFrameIntervalMs = 1000 / kVideoFps;
 
 File video;
 uint8_t* frame = nullptr;
 
-uint8_t readBuffer[kReadBufferSize];
+uint8_t* readBuffer = nullptr;
 size_t cursor = 0;
 size_t buffered = 0;
 
@@ -28,14 +28,16 @@ bool hasFrame = false;
 struct Reader {
     int read() {
         if (cursor >= buffered) {
-            buffered = video.read(readBuffer, sizeof(readBuffer));
+            if (!readBuffer || !video) return -1;
+            // Only lock the SD bus while refilling the PSRAM cache. Parsing JPEG
+            // boundaries then happens from PSRAM without blocking uploads/audio.
+            if (xSemaphoreTake(sdSemaphore, portMAX_DELAY) != pdTRUE) return -1;
+            buffered = video.read(readBuffer, kReadBufferSize);
+            xSemaphoreGive(sdSemaphore);
             cursor = 0;
         }
 
-        if (cursor >= buffered) {
-            return -1;
-        }
-
+        if (cursor >= buffered) return -1;
         return readBuffer[cursor++];
     }
 
@@ -112,10 +114,12 @@ const char* frameErrorText(media::FrameResult result) {
 }
 
 bool rewindVideo() {
-    if (!video.seek(0)) {
-        return false;
+    bool ok = false;
+    if (xSemaphoreTake(sdSemaphore, portMAX_DELAY) == pdTRUE) {
+        ok = video.seek(0);
+        xSemaphoreGive(sdSemaphore);
     }
-
+    if (!ok) return false;
     reader.reset();
     return true;
 }
@@ -134,6 +138,10 @@ void closeVideo() {
         heap_caps_free(frame);
         frame = nullptr;
     }
+    if (readBuffer) {
+        heap_caps_free(readBuffer);
+        readBuffer = nullptr;
+    }
 
     reader.reset();
     nextFrameAt = 0;
@@ -151,9 +159,13 @@ bool openVideo(const String& path) {
     frame = static_cast<uint8_t*>(
         heap_caps_malloc(kFrameCapacity, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT)
     );
+    readBuffer = static_cast<uint8_t*>(
+        heap_caps_malloc(kReadBufferSize, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT)
+    );
 
-    if (!frame) {
-        showError("Not enough PSRAM for video");
+    if (!frame || !readBuffer) {
+        closeVideo();
+        showError("Not enough PSRAM for video buffers");
         return false;
     }
 
@@ -170,10 +182,11 @@ bool openVideo(const String& path) {
     }
 
     Serial.printf(
-        "[VIDEO] Open: %s | file=%lu bytes | buffer=%u KiB | fps=%lu\n",
+        "[VIDEO] Open: %s | file=%lu bytes | frame=%u KiB | read-ahead=%u KiB | fps=%lu\n",
         path.c_str(),
         static_cast<unsigned long>(video.size()),
         static_cast<unsigned>(kFrameCapacity / 1024),
+        static_cast<unsigned>(kReadBufferSize / 1024),
         static_cast<unsigned long>(kVideoFps)
     );
 
@@ -197,11 +210,6 @@ bool advanceVideo() {
     size_t frameSize = 0;
     media::FrameResult result = media::FrameResult::Invalid;
 
-    // Keep the SD bus locked while Reader is consuming bytes.
-    if (xSemaphoreTake(sdSemaphore, pdMS_TO_TICKS(50)) != pdTRUE) {
-        return true;
-    }
-
     result = media::readMjpegFrame(reader, frame, kFrameCapacity, frameSize);
 
     // Loop the video when the stream reaches EOF.
@@ -210,8 +218,6 @@ bool advanceVideo() {
             result = media::readMjpegFrame(reader, frame, kFrameCapacity, frameSize);
         }
     }
-
-    xSemaphoreGive(sdSemaphore);
 
     if (result != media::FrameResult::Frame) {
         const char* error = frameErrorText(result);

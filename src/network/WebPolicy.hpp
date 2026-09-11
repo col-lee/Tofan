@@ -22,7 +22,33 @@ inline bool filename(const char* s) {
     return true;
 }
 inline bool directory(const char* s) {
-    return s && (!std::strcmp(s,"Pictures") || !std::strcmp(s,"Musics") || !std::strcmp(s,"Videos"));
+    return s && (!std::strcmp(s,"Pictures") || !std::strcmp(s,"Musics") || !std::strcmp(s,"Videos") || !std::strcmp(s,"Files"));
+}
+inline bool extensionEquals(const char* name, const char* extension) {
+    if (!name || !extension) return false;
+    const char* dot = std::strrchr(name, '.');
+    if (!dot || !dot[1]) return false;
+    ++dot;
+    for (; *dot && *extension; ++dot, ++extension) {
+        char a=*dot,b=*extension;
+        if(a>='A'&&a<='Z')a=static_cast<char>(a-'A'+'a');
+        if(b>='A'&&b<='Z')b=static_cast<char>(b-'A'+'a');
+        if(a!=b)return false;
+    }
+    return *dot=='\0' && *extension=='\0';
+}
+inline bool audioFilename(const char* name) {
+    return extensionEquals(name,"mp3") || extensionEquals(name,"wav") || extensionEquals(name,"aac") ||
+           extensionEquals(name,"m4a") || extensionEquals(name,"flac");
+}
+inline bool mediaFilename(const char* name,const char* dir) {
+    if(!filename(name) || !directory(dir)) return false;
+    if(!std::strcmp(dir,"Files")) return true;
+    if(!std::strcmp(dir,"Pictures")) return extensionEquals(name,"jpg") || extensionEquals(name,"jpeg") ||
+        extensionEquals(name,"png") || extensionEquals(name,"gif");
+    if(!std::strcmp(dir,"Musics")) return audioFilename(name);
+    return extensionEquals(name,"mp4") || extensionEquals(name,"webm") || extensionEquals(name,"mov") ||
+        extensionEquals(name,"m4v") || extensionEquals(name,"avi") || extensionEquals(name,"mjpeg") || extensionEquals(name,"mjpg");
 }
 inline bool imageHeader(const uint8_t* bytes, size_t n) {
     // esp_image_header_t: magic, segment count, chip_id (ESP32-S3 = 9).

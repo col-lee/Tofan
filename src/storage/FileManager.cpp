@@ -46,6 +46,7 @@ void FileManager::initSDCard()
             if (!SD.exists("/main/Musics"))
                 SD.mkdir("/main/Musics");
             if (!SD.exists("/main/Videos")) SD.mkdir("/main/Videos");
+            if (!SD.exists("/main/Files")) SD.mkdir("/main/Files");
             if (!SD.exists("/WEB_Source"))
                 SD.mkdir("/WEB_Source");
             xSemaphoreGive(sdSemaphore);

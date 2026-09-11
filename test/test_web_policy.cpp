@@ -7,7 +7,9 @@ int main(){
  for(auto s:{""," leading","trailing ","bad\nname","12345678901234567890123456789012"})assert(!portal::accountName(s));
  assert(portal::filename("holiday.JPG"));assert(portal::filename("ภาพ.png"));
  for(auto s:{"","../a.jpg","a/b.jpg","a\\b.jpg",".hidden","a:","a\n.jpg","a.jpg ","a."})assert(!portal::filename(s));
- assert(portal::directory("Pictures"));assert(!portal::directory("Pictures/../"));assert(!portal::directory("/main"));
+ assert(portal::directory("Pictures"));assert(portal::directory("Musics"));assert(portal::directory("Videos"));assert(portal::directory("Files"));assert(!portal::directory("Pictures/../"));assert(!portal::directory("/main"));
+ assert(portal::audioFilename("track.mp3"));assert(portal::audioFilename("TRACK.FLAC"));assert(!portal::audioFilename("track.ogg"));
+ assert(portal::mediaFilename("track.m4a","Musics"));assert(!portal::mediaFilename("track.pdf","Musics"));assert(portal::mediaFilename("track.pdf","Files"));
  uint8_t h[24]{};h[0]=0xe9;h[1]=2;h[12]=9;assert(portal::imageHeader(h,24));assert(!portal::imageHeader(h,23));h[12]=0;assert(!portal::imageHeader(h,24));h[12]=9;h[0]=0;assert(!portal::imageHeader(h,24));
  assert(portal::firmwareSize(24,500));assert(!portal::firmwareSize(23,500));assert(!portal::firmwareSize(501,500));
  assert(portal::uploadFits(1024,1024*1024,0));

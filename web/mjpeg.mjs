@@ -23,7 +23,7 @@ export function* mjpegFrames(bytes) {
    p+=size;scan=marker===218;
   }
   if(!done)throw Error('Truncated MJPEG frame');
-  if(++count>1440)throw Error('MJPEG supports at most 1440 frames (2 minutes at 12 FPS)');
+  count++;
   yield [start,p];
  }
  if(!count)throw Error('MJPEG contains no frames');

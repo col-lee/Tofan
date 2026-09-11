@@ -9,6 +9,7 @@
 #include "../ai/AIConversation.hpp"
 #include <esp_ota_ops.h>
 #include <esp_http_client.h>
+#include <esp_heap_caps.h>
 // Arduino shadows the SDK header with an identically named header.
 // Use the ESP-IDF built-in certificate bundle, not Arduino's unset custom bundle.
 extern "C" esp_err_t esp_crt_bundle_attach(void* conf);
@@ -32,6 +33,8 @@ std::atomic<bool> transfer{false}, updating{false};
 std::atomic<uint32_t> rebootAt{0};
 String otaState = "idle", otaError;
 size_t otaDone = 0, otaTotal = 0;
+String audioImportState = "idle", audioImportError;
+size_t audioImportDone = 0, audioImportTotal = 0;
 String settingsResult;
 uint32_t settingsRevision=0;
 struct Guard { SemaphoreHandle_t m; bool held; Guard(SemaphoreHandle_t m):m(m),held(m && xSemaphoreTake(m,pdMS_TO_TICKS(1500))==pdTRUE){} ~Guard(){if(held)xSemaphoreGive(m);} };
@@ -58,6 +61,7 @@ bool authorized(AsyncWebServerRequest* r,bool mutation=false,bool send=true) {
     if(!ok && send) reply(r,401,"Please sign in again"); return ok;
 }
 void otaStatus(const char* state,const String& error="",size_t done=0,size_t total=0) { Guard g(portalMutex); if(g.held){otaState=state;otaError=error;otaDone=done;otaTotal=total;} }
+void audioImportStatus(const char* state,const String& error="",size_t done=0,size_t total=0) { Guard g(portalMutex); if(g.held){audioImportState=state;audioImportError=error;audioImportDone=done;audioImportTotal=total;} }
 size_t slotSize() { const auto* p=esp_ota_get_next_update_partition(nullptr); return p?p->size:0; }
 bool deviceBusy() { return networkSettingsBusy() || DISM.currentState==UI_STATE::APP_DISPLAY || app::runtime.isRecordingMode || app::runtime.aiPetProcessing || isPlayingAudio || hasPausedAudio; }
 String pathFor(AsyncWebServerRequest* r,bool post) {
@@ -66,10 +70,16 @@ String pathFor(AsyncWebServerRequest* r,bool post) {
     return "/main/"+dir+"/"+name;
 }
 bool mediaExtension(const String& name,const String& dir) {
-    String s=name.substring(name.lastIndexOf('.')+1); s.toLowerCase();
-    if(dir=="Pictures") return s=="jpg"||s=="jpeg"||s=="png"||s=="gif";
-    if(dir=="Musics") return s=="mp3"||s=="wav"||s=="aac"||s=="m4a"||s=="flac";
-    return dir=="Videos" && (s=="mp4"||s=="webm"||s=="mov"||s=="m4v"||s=="avi"||s=="mjpeg"||s=="mjpg");
+    return portal::mediaFilename(name.c_str(),dir.c_str());
+}
+bool directHttpUrl(const String& url) {
+    return url.length() <= 1023 && url.indexOf('@') < 0 && url.indexOf('\r') < 0 && url.indexOf('\n') < 0 &&
+           (url.startsWith("https://") || url.startsWith("http://"));
+}
+bool blockedYouTubeUrl(const String& url) {
+    String lower=url; lower.toLowerCase();
+    return lower.indexOf("youtube.com") >= 0 || lower.indexOf("youtu.be") >= 0 ||
+           lower.indexOf("youtube-nocookie.com") >= 0 || lower.indexOf("googlevideo.com") >= 0;
 }
 bool enqueue(AsyncWebServerRequest* r,Command::Kind kind,const String& body) {
     if(body.length()>=sizeof(Command::body)){reply(r,413,"Settings too large");return false;}
@@ -142,6 +152,119 @@ void uploadComplete(AsyncWebServerRequest* r) {
     if(u->error.length()){if(u->ota){u->finished=false;otaStatus("error",u->error);}reply(r,u->code,u->error);}
     else reply(r,200,u->ota?"Firmware verified; restarting":"File saved",true);
     r->_tempObject=nullptr;dispose(u);
+}
+
+struct AudioImportJob { String url; String name; };
+
+bool writeImportChunk(File& file,const uint8_t* data,size_t length,String& error) {
+    constexpr size_t sliceBytes = 16 * 1024;
+    size_t offset=0;
+    while(offset<length) {
+        const size_t slice=std::min(sliceBytes,length-offset);
+        {
+            Guard g(sdSemaphore);
+            if(!g.held){error="SD busy during download";return false;}
+            if(file.write(data+offset,slice)!=slice){error="SD write failed";return false;}
+        }
+        offset+=slice;
+        // Audio task has a higher priority; yield only after releasing SD so its
+        // PSRAM read-ahead buffer can be topped up during a long import.
+        vTaskDelay(1);
+    }
+    return true;
+}
+
+void audioImportTask(void* arg) {
+    std::unique_ptr<AudioImportJob> job(static_cast<AudioImportJob*>(arg));
+    const String path="/main/Musics/"+job->name;
+    const String temp="/main/.audio-"+randomHex()+".part";
+    String error;
+    size_t done=0,total=0;
+    File file;
+    esp_http_client_handle_t client=nullptr;
+    uint8_t* buffer=nullptr;
+    size_t bufferSize=32*1024;
+    audioImportStatus("connecting");
+
+    if(job->url.startsWith("https://") && time(nullptr)<1700000000){
+        configTime(0,0,"pool.ntp.org","time.nist.gov");
+        for(int i=0;i<100 && time(nullptr)<1700000000;i++)vTaskDelay(pdMS_TO_TICKS(100));
+        if(time(nullptr)<1700000000)error="Clock unavailable for TLS verification";
+    }
+
+    {
+        Guard g(sdSemaphore);
+        if(!g.held || !isConnectSDcard) error="SD unavailable";
+        else if(SD.exists(path)) error="File already exists; choose another name";
+        else {
+            file=SD.open(temp,FILE_WRITE);
+            if(!file) error="Cannot create temporary audio file";
+        }
+    }
+
+    esp_http_client_config_t config{};
+    config.url=job->url.c_str();config.timeout_ms=15000;config.buffer_size=4096;
+    config.crt_bundle_attach=esp_crt_bundle_attach;config.disable_auto_redirect=true;
+    if(error.isEmpty()) client=esp_http_client_init(&config);
+    if(!client && error.isEmpty()) error="Cannot create HTTP client";
+
+    if(client && error.isEmpty()) {
+        if(esp_http_client_open(client,0)!=ESP_OK) error="Connection failed (check URL, WiFi and TLS certificate)";
+        else {
+            const int64_t length=esp_http_client_fetch_headers(client);
+            const int status=esp_http_client_get_status_code(client);
+            if(status!=200) error="Audio URL must return the file directly with HTTP 200; redirects are not followed";
+            else if(length>static_cast<int64_t>(std::numeric_limits<size_t>::max())) error="Audio file is too large for this device";
+            else if(length>0) total=static_cast<size_t>(length);
+        }
+    }
+
+    if(error.isEmpty() && total) {
+        Guard g(sdSemaphore);
+        if(!g.held || !portal::uploadFits(total,SD.totalBytes(),SD.usedBytes())) error="Not enough SD space";
+    }
+
+    if(error.isEmpty()) {
+        buffer=static_cast<uint8_t*>(heap_caps_malloc(bufferSize,MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT));
+        if(!buffer) {
+            bufferSize=4096;
+            buffer=static_cast<uint8_t*>(heap_caps_malloc(bufferSize,MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT));
+        }
+        if(!buffer) error="Not enough memory for download buffer";
+    }
+
+    while(error.isEmpty()) {
+        const int n=esp_http_client_read(client,reinterpret_cast<char*>(buffer),bufferSize);
+        if(n<0){error="Audio download interrupted";break;}
+        if(n==0)break;
+        if(total && done+static_cast<size_t>(n)>total){error="Server sent more data than Content-Length";break;}
+        if(!total) {
+            Guard g(sdSemaphore);
+            if(!g.held || !portal::uploadFits(static_cast<uint64_t>(n),SD.totalBytes(),SD.usedBytes())) {error="Not enough SD space";break;}
+        }
+        if(!writeImportChunk(file,buffer,static_cast<size_t>(n),error))break;
+        done+=static_cast<size_t>(n);
+        audioImportStatus("downloading","",done,total);
+    }
+
+    if(error.isEmpty() && total && done!=total) error="Audio download ended before Content-Length";
+    if(client){esp_http_client_close(client);esp_http_client_cleanup(client);}
+    if(buffer)heap_caps_free(buffer);
+
+    bool committed=false;
+    {
+        Guard g(sdSemaphore);
+        if(g.held) {
+            if(file){file.flush();file.close();}
+            if(error.isEmpty() && !SD.exists(path) && SD.rename(temp,path)) committed=true;
+            else {SD.remove(temp);if(error.isEmpty())error="Cannot save downloaded audio";}
+        } else if(error.isEmpty()) error="SD busy while finishing download";
+    }
+
+    if(committed) audioImportStatus("done","",done,total?total:done);
+    else audioImportStatus("error",error.length()?error:"Audio import failed",done,total);
+    transfer=false;
+    vTaskDelete(nullptr);
 }
 
 void urlUpdate(void* arg) {
@@ -266,6 +389,18 @@ void registerWebPortal(AsyncWebServer& server) {
         reply(r,ok?200:400,ok?"File updated":"File operation failed",ok);
     });
     server.on("/api/upload",AsyncWebRequestMethod::HTTP_POST,uploadComplete,[](AsyncWebServerRequest* r,String name,size_t i,uint8_t* data,size_t len,bool last){uploadChunk(r,name,i,data,len,last,false);});
+    server.on("/api/audio/import",AsyncWebRequestMethod::HTTP_POST,[](AsyncWebServerRequest* r){if(!authorized(r,true))return;
+        String url=param(r,"url"),name=param(r,"name");name.trim();
+        if(!directHttpUrl(url)){reply(r,400,"Use a direct HTTP(S) audio file URL without credentials");return;}
+        if(blockedYouTubeUrl(url)){reply(r,400,"YouTube page/stream URLs are not supported. Use a direct audio file URL you are allowed to download, or upload your audio file.");return;}
+        if(!portal::audioFilename(name.c_str())||!portal::filename(name.c_str())){reply(r,400,"Audio name must end in .mp3, .wav, .aac, .m4a or .flac");return;}
+        if(rebootAt.load()||updating||WiFi.status()!=WL_CONNECTED||app::runtime.isRecordingMode||app::runtime.aiPetProcessing||networkSettingsBusy()){reply(r,409,"Connect internet WiFi and stop recording/AI processing first");return;}
+        bool free=false;if(!transfer.compare_exchange_strong(free,true)){reply(r,409,"Another transfer is active");return;}
+        auto* job=new(std::nothrow) AudioImportJob{url,name};
+        audioImportStatus("queued","",0,0);
+        if(!job||xTaskCreatePinnedToCore(audioImportTask,"audioImport",8192,job,2,nullptr,0)!=pdPASS){delete job;transfer=false;audioImportStatus("error","Not enough memory to start audio import");reply(r,503,"Not enough memory to start audio import");return;}
+        reply(r,202,"Audio download started",true);
+    });
     server.on("/api/ota/file",AsyncWebRequestMethod::HTTP_POST,uploadComplete,[](AsyncWebServerRequest* r,String name,size_t i,uint8_t* data,size_t len,bool last){uploadChunk(r,name,i,data,len,last,true);});
     server.on("/api/ota",AsyncWebRequestMethod::HTTP_GET,[](AsyncWebServerRequest* r){if(!authorized(r))return;JsonDocument d;{Guard g(portalMutex);d["state"]=otaState;d["error"]=otaError;d["done"]=otaDone;d["total"]=otaTotal;}String out;serializeJson(d,out);r->send(200,"application/json",out);});
     server.on("/api/ota/url",AsyncWebRequestMethod::HTTP_POST,[](AsyncWebServerRequest* r){if(!authorized(r,true))return;String url=param(r,"url");
@@ -307,6 +442,7 @@ void serviceWebPortal() {
     d["connected"]=WiFi.status()==WL_CONNECTED;d["ssid"]=WiFi.SSID();d["ip"]=WiFi.localIP().toString();d["apIP"]=WiFi.softAPIP().toString();d["rssi"]=WiFi.RSSI();d["networkBusy"]=networkSettingsBusy();
     d["sd"]=isConnectSDcard;{Guard g(sdSemaphore);if(g.held && isConnectSDcard){d["storageTotal"]=SD.totalBytes();d["storageUsed"]=SD.usedBytes();}}
     d["playing"]=isPlayingAudio;d["title"]=currentSongTitle;d["current"]=currentAudioTime;d["duration"]=totalAudioDuration;d["recording"]=app::runtime.isRecording;d["busy"]=transfer.load();
+    {Guard g(portalMutex);if(g.held){d["audioImportState"]=audioImportState;d["audioImportError"]=audioImportError;d["audioImportDone"]=audioImportDone;d["audioImportTotal"]=audioImportTotal;}}
     auto s=d["settings"].to<JsonObject>();const auto& v=userSettings.values;s["volume"]=v.volume;s["volumeStep"]=v.volumeStep;s["voice"]=v.voice;s["autoNext"]=v.autoNext;s["shuffle"]=v.shuffle;s["wifi"]=v.wifi;s["admin"]=v.admin;
     auto colors=s["colors"].to<JsonArray>();for(auto color:v.colors){auto row=colors.add<JsonArray>();row.add(color.hue);row.add(color.saturation);row.add(color.value);}
     JsonDocument ai;deserializeJson(ai,aiConversation.getConfigJson(false));d["ai"]=ai;

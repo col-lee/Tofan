@@ -275,8 +275,12 @@ void DisplayManager::loadMusicList() {
         for (JsonObject file : files) {
             bool isDir = file["isDir"];
             String name = file["name"].as<String>();
-            // คัดเฉพาะไฟล์เสียง
-            if (!isDir && (name.endsWith(".mp3") || name.endsWith(".wav"))) {
+            String lowerName = name;
+            lowerName.toLowerCase();
+            // Match the codecs supported by the pinned ESP32-audioI2S build.
+            if (!isDir && (lowerName.endsWith(".mp3") || lowerName.endsWith(".wav") ||
+                           lowerName.endsWith(".aac") || lowerName.endsWith(".m4a") ||
+                           lowerName.endsWith(".flac"))) {
                 playlistNames.push_back(name);
                 playlistPaths.push_back("/main/Musics/" + name);
             }

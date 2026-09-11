@@ -7,14 +7,14 @@ export function cropControls({editor,screen,read,change,source}){
  const overview=document.createElement('canvas');overview.id='cropSource';overview.className='crop-source';overview.tabIndex=0;overview.setAttribute('aria-label','ตำแหน่งครอป ลากกรอบหรือใช้ปุ่มลูกศร');
  preset.after(overview);
  const hint=document.createElement('p');hint.className='hint';hint.textContent='ลากกรอบเพื่อเลือกส่วนที่ต้องการ · ใช้ซูมเพื่อย่อกรอบ · ภาพด้านล่างคือตัวอย่างผลลัพธ์';overview.after(hint);
- const animationHint=document.createElement('p');animationHint.className='hint';animationHint.textContent='GIF / MJPEG / วิดีโอ ใช้ตำแหน่งครอปเดียวกันทุกเฟรมก่อนบีบอัด';hint.after(animationHint);
+ const animationHint=document.createElement('p');animationHint.className='hint';animationHint.textContent='GIF / MJPEG แสดงตัวอย่างเฟรมแรก และครอปตำแหน่งเดียวกันทุกเฟรมก่อนบีบอัด';hint.after(animationHint);
  const w=editor.querySelector('#outW'),h=editor.querySelector('#outH');
  select.onchange=()=>{if(select.value!=='custom'){[w.value,h.value]=select.value==='screen'?screen():[320,240];change();}};
  for(const input of [w,h])input.addEventListener('input',()=>{select.value='custom';});
  let geometry=null;
  function render(){
   const image=source(),o=read();if(!image||!dimensions(o.w,o.h))return;
-  const sw=image.videoWidth||image.naturalWidth||image.width,sh=image.videoHeight||image.naturalHeight||image.height;if(!sw||!sh)return;
+  const sw=image.videoWidth||image.naturalWidth||image.width,sh=image.videoHeight||image.naturalHeight||image.height;
   const scale=Math.min(640/sw,360/sh,1);overview.width=Math.max(1,Math.round(sw*scale));overview.height=Math.max(1,Math.round(sh*scale));
   const ctx=overview.getContext('2d'),r=rect(sw,sh,o.w,o.h,o.mode,o.zoom,o.panX,o.panY);
   const factor=overview.width/r.width,x=-r.x*factor,y=-r.y*factor,cw=o.w*factor,ch=o.h*factor;

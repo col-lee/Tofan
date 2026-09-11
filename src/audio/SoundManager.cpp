@@ -4,6 +4,7 @@
 #include "PlaybackEvents.hpp"
 #include "../core/UserSettings.hpp"
 #include <atomic>
+#include <esp_heap_caps.h>
 #include "../display/DisplayManager.hpp"
 #include "../storage/FileManager.hpp"
 #include "../network/Network.hpp"
@@ -98,7 +99,10 @@ typedef struct {
 } inference_t;
 
 static inference_t inference;
+static constexpr int AUDIO_SRAM_FALLBACK_BUFFER_BYTES = 24 * 1024;
+static constexpr int AUDIO_PSRAM_BUFFER_BYTES = 1024 * 1024;
 static const uint32_t sample_buffer_size = 2048;
+// Small capture/DMA-adjacent scratch buffers stay internal; large queues/read-ahead live in PSRAM.
 static signed short sampleBuffer[sample_buffer_size];
 static bool debug_nn = false; // Set this to true to see e.g. features generated from the raw signal
 static int print_results = -(EI_CLASSIFIER_SLICES_PER_MODEL_WINDOW);
@@ -107,14 +111,18 @@ static volatile bool record_status = true;
 static int32_t raw32_buffer[sample_buffer_size / 4];
 
 static constexpr uint16_t RECORDER_FRAME_SAMPLES = sample_buffer_size / 4;
-static constexpr uint8_t RECORDER_QUEUE_DEPTH = 8;
+static constexpr uint8_t RECORDER_QUEUE_DEPTH = 32;
 
 struct RecorderFrame {
     uint16_t sampleCount;
     int16_t samples[RECORDER_FRAME_SAMPLES];
 };
 
-static QueueHandle_t recorderQueue = nullptr;
+// Keep the ~32 KiB recorder backlog in PSRAM. FreeRTOS queues only move 1-byte slot IDs,
+// which keeps internal SRAM pressure low while allowing SD writes to briefly yield to playback/uploads.
+static RecorderFrame* recorderFrames = nullptr;
+static QueueHandle_t recorderReadyQueue = nullptr;
+static QueueHandle_t recorderFreeQueue = nullptr;
 static TaskHandle_t microphoneTask = nullptr;
 static volatile bool microphoneReady = false;
 static volatile bool microphoneCapturing = false;
@@ -130,6 +138,28 @@ static bool microphone_inference_record(void);
 static int microphone_audio_signal_get_data(size_t offset, size_t length, float *outPtr);
 static int i2s_init(uint32_t samplingRate);
 static bool writeRecorderFrame(const RecorderFrame& frame);
+
+static void freeInferenceBuffers() {
+    if (inference.buffers[0]) heap_caps_free(inference.buffers[0]);
+    if (inference.buffers[1]) heap_caps_free(inference.buffers[1]);
+    inference.buffers[0] = nullptr;
+    inference.buffers[1] = nullptr;
+}
+
+static void resetRecorderQueues() {
+    if (!recorderReadyQueue || !recorderFreeQueue || !recorderFrames) return;
+    xQueueReset(recorderReadyQueue);
+    xQueueReset(recorderFreeQueue);
+    for (uint8_t slot = 0; slot < RECORDER_QUEUE_DEPTH; ++slot) {
+        xQueueSend(recorderFreeQueue, &slot, 0);
+    }
+}
+
+static void releaseRecorderStorage() {
+    if (recorderReadyQueue) { vQueueDelete(recorderReadyQueue); recorderReadyQueue = nullptr; }
+    if (recorderFreeQueue) { vQueueDelete(recorderFreeQueue); recorderFreeQueue = nullptr; }
+    if (recorderFrames) { heap_caps_free(recorderFrames); recorderFrames = nullptr; }
+}
 
 static int16_t convertI2SSample(int32_t rawSample) {
     int32_t sample = (rawSample >> 16) * 16;
@@ -175,6 +205,9 @@ int currentStationIndex = 2;
 
 void initAudio(){
   Serial.printf("Audio Task started on Core %d\n", xPortGetCoreID());
+  // ESP32-audioI2S defaults to ~300 KiB in PSRAM. A larger read-ahead buffer makes
+  // local/online playback much more tolerant of SD and Wi-Fi upload bursts.
+  audio.setBufsize(AUDIO_SRAM_FALLBACK_BUFFER_BYTES, AUDIO_PSRAM_BUFFER_BYTES);
   if(audio.setPinout(AUDIO_BCLK, AUDIO_LRCLK, AUDIO_DIN)) {
     Serial.println("installed audio.");
     isAudio_install = true;
@@ -285,16 +318,22 @@ static void capture_samples(void* arg) {
         microphoneLastSampleMillis = millis();
 
         if (app::runtime.isRecordingMode) {
-            if (!app::runtime.isRecording || recorderQueue == nullptr) continue;
+            if (!app::runtime.isRecording || !recorderFrames || !recorderReadyQueue || !recorderFreeQueue) continue;
 
-            RecorderFrame frame{};
+            uint8_t slot = 0;
+            if (xQueueReceive(recorderFreeQueue, &slot, 0) != pdPASS) {
+                recordingDroppedFrames++;
+                continue;
+            }
+            RecorderFrame& frame = recorderFrames[slot];
             frame.sampleCount = sampleCount;
             for (uint16_t index = 0; index < sampleCount; ++index) {
                 frame.samples[index] = convertI2SSample(raw32_buffer[index]);
             }
             microphoneLevel = frame.samples[sampleCount - 1];
 
-            if (app::runtime.isRecording && xQueueSend(recorderQueue, &frame, 0) != pdPASS) {
+            if (!app::runtime.isRecording || xQueueSend(recorderReadyQueue, &slot, 0) != pdPASS) {
+                xQueueSend(recorderFreeQueue, &slot, 0);
                 recordingDroppedFrames++;
             }
             continue;
@@ -322,14 +361,21 @@ static void capture_samples(void* arg) {
  */
 static bool microphone_inference_start(uint32_t n_samples)
 {
-    inference.buffers[0] = (signed short *)malloc(n_samples * sizeof(signed short));
-    if (inference.buffers[0] == NULL) {
-        return false;
-    }
+    const size_t inferenceBytes = n_samples * sizeof(signed short);
+    const uint32_t preferredCaps = psramFound() ? (MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT) : (MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
 
-    inference.buffers[1] = (signed short *)malloc(n_samples * sizeof(signed short));
-    if (inference.buffers[1] == NULL) {
-        ei_free(inference.buffers[0]);
+    inference.buffers[0] = static_cast<signed short*>(heap_caps_malloc(inferenceBytes, preferredCaps));
+    if (!inference.buffers[0] && psramFound()) {
+        inference.buffers[0] = static_cast<signed short*>(heap_caps_malloc(inferenceBytes, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
+    }
+    if (!inference.buffers[0]) return false;
+
+    inference.buffers[1] = static_cast<signed short*>(heap_caps_malloc(inferenceBytes, preferredCaps));
+    if (!inference.buffers[1] && psramFound()) {
+        inference.buffers[1] = static_cast<signed short*>(heap_caps_malloc(inferenceBytes, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
+    }
+    if (!inference.buffers[1]) {
+        freeInferenceBuffers();
         return false;
     }
 
@@ -339,34 +385,40 @@ static bool microphone_inference_start(uint32_t n_samples)
     inference.buf_ready  = 0;
 
     if (i2s_init(EI_CLASSIFIER_FREQUENCY) != 0) {
-        ei_free(inference.buffers[0]);
-        ei_free(inference.buffers[1]);
-        inference.buffers[0] = nullptr;
-        inference.buffers[1] = nullptr;
+        freeInferenceBuffers();
         return false;
     }
 
-    recorderQueue = xQueueCreate(RECORDER_QUEUE_DEPTH, sizeof(RecorderFrame));
-    if (recorderQueue == nullptr) {
+    const size_t recorderBytes = sizeof(RecorderFrame) * RECORDER_QUEUE_DEPTH;
+    recorderFrames = static_cast<RecorderFrame*>(heap_caps_calloc(
+        RECORDER_QUEUE_DEPTH, sizeof(RecorderFrame),
+        psramFound() ? (MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT) : (MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)));
+    if (!recorderFrames && psramFound()) {
+        recorderFrames = static_cast<RecorderFrame*>(heap_caps_calloc(
+            RECORDER_QUEUE_DEPTH, sizeof(RecorderFrame), MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
+    }
+    recorderReadyQueue = xQueueCreate(RECORDER_QUEUE_DEPTH, sizeof(uint8_t));
+    recorderFreeQueue = xQueueCreate(RECORDER_QUEUE_DEPTH, sizeof(uint8_t));
+    if (!recorderFrames || !recorderReadyQueue || !recorderFreeQueue) {
+        releaseRecorderStorage();
         i2s_driver_uninstall(MIC_I2S_PORT);
-        ei_free(inference.buffers[0]);
-        ei_free(inference.buffers[1]);
-        inference.buffers[0] = nullptr;
-        inference.buffers[1] = nullptr;
+        freeInferenceBuffers();
         return false;
     }
+    resetRecorderQueues();
+
+    Serial.printf("[AUDIO] Inference buffers: %u bytes x2 | recorder backlog: %u KiB | PSRAM=%s\n",
+                  static_cast<unsigned>(inferenceBytes),
+                  static_cast<unsigned>((recorderBytes + 1023) / 1024),
+                  psramFound() ? "yes" : "no");
 
     record_status = true;
     const BaseType_t taskCreated = xTaskCreate(capture_samples, "CaptureSamples", 4096,
                                                 nullptr, 10, &microphoneTask);
     if (taskCreated != pdPASS) {
-        vQueueDelete(recorderQueue);
-        recorderQueue = nullptr;
+        releaseRecorderStorage();
         i2s_driver_uninstall(MIC_I2S_PORT);
-        ei_free(inference.buffers[0]);
-        ei_free(inference.buffers[1]);
-        inference.buffers[0] = nullptr;
-        inference.buffers[1] = nullptr;
+        freeInferenceBuffers();
         return false;
     }
 
@@ -626,13 +678,13 @@ void audio_eof_mp3(const char *info){
 }
 
 bool enterRecordingMode() {
-    if (!microphoneReady || recorderQueue == nullptr) return false;
+    if (!microphoneReady || !recorderFrames || !recorderReadyQueue || !recorderFreeQueue) return false;
 
     app::runtime.isRecording = false;
     app::runtime.isRecordingMode = true;
     inference.buf_count = 0;
     inference.buf_ready = 0;
-    xQueueReset(recorderQueue);
+    resetRecorderQueues();
     return true;
 }
 
@@ -642,11 +694,12 @@ void exitRecordingMode() {
     app::runtime.isRecordingMode = false;
     inference.buf_count = 0;
     inference.buf_ready = 0;
-    if (recorderQueue != nullptr) xQueueReset(recorderQueue);
+    resetRecorderQueues();
 }
 
 bool startRecording(const char* path) {
-    if (!app::runtime.isRecordingMode || !isFileManager_install || recordFile) {
+    if (!app::runtime.isRecordingMode || !isFileManager_install || recordFile ||
+        !recorderFrames || !recorderReadyQueue || !recorderFreeQueue) {
         return false;
     }
     app::runtime.isRecording = false;
@@ -701,7 +754,7 @@ bool startRecording(const char* path) {
     }
     totalSize = 0;
     recordingDroppedFrames = 0;
-    xQueueReset(recorderQueue);
+    resetRecorderQueues();
     app::runtime.isRecording = true;
     Serial.println("Recording started");
     return true;
@@ -721,11 +774,12 @@ static bool writeRecorderFrame(const RecorderFrame& frame) {
 }
 
 void recordLoop() {
-    if (!app::runtime.isRecording || recorderQueue == nullptr) return;
+    if (!app::runtime.isRecording || !recorderFrames || !recorderReadyQueue || !recorderFreeQueue) return;
 
-    RecorderFrame frame{};
-    for (uint8_t index = 0; index < 2 && xQueueReceive(recorderQueue, &frame, 0) == pdPASS; ++index) {
-        if (!writeRecorderFrame(frame)) recordingDroppedFrames++;
+    uint8_t slot = 0;
+    for (uint8_t index = 0; index < 4 && xQueueReceive(recorderReadyQueue, &slot, 0) == pdPASS; ++index) {
+        if (!writeRecorderFrame(recorderFrames[slot])) recordingDroppedFrames++;
+        xQueueSend(recorderFreeQueue, &slot, 0);
     }
 }
 
@@ -733,9 +787,10 @@ void stopRecording() {
     if (!recordFile) return;
 
     app::runtime.isRecording = false;
-    RecorderFrame frame{};
-    while (recorderQueue != nullptr && xQueueReceive(recorderQueue, &frame, 0) == pdPASS) {
-        if (!writeRecorderFrame(frame)) recordingDroppedFrames++;
+    uint8_t slot = 0;
+    while (recorderFrames && recorderReadyQueue && recorderFreeQueue && xQueueReceive(recorderReadyQueue, &slot, 0) == pdPASS) {
+        if (!writeRecorderFrame(recorderFrames[slot])) recordingDroppedFrames++;
+        xQueueSend(recorderFreeQueue, &slot, 0);
     }
 
     if (xSemaphoreTake(sdSemaphore, pdMS_TO_TICKS(500)) != pdTRUE) {
