@@ -101,6 +101,8 @@ public:
     unsigned long petMoodUntil = 0;
     unsigned long lastMoodChange = 0;
     float petVoiceLevel = 0.0f;
+    float petSpeechLevel = 0.0f;
+    bool petSpeaking = false;
     uint32_t petInteractionCount = 0;
     int petLookDirection = 0;
     unsigned long petLookUntil = 0;

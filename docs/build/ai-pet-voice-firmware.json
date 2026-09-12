@@ -1,0 +1,10 @@
+{
+  "firmware": ".pio/build/esp32-s3-devkitc-1-n16r8v/firmware.bin",
+  "bytes": 2053776,
+  "sha256": "ca89e3a60195215b4d71e32d37d16e1a76e86321d1634c6f7247eba177823283",
+  "voice_envelope_tests": "passed",
+  "pet_renderer_tests": "passed",
+  "gemini_queue_and_packet_tests": "passed",
+  "embedded_web_assets_verified": 10,
+  "hardware_flashed": false
+}

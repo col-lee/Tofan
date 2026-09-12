@@ -511,7 +511,8 @@ void DisplayManager::drawAIPet(bool pushToScreen) {
             target.blush=.45f; target.sweat=true; target.accent=PET_SKY; break;
         case ui::PetMood::Listening:
             target.eyeW=44; target.eyeHL=54; target.eyeHR=64; target.eyeY=-10;
-            target.gazeX=-6; target.mouthW=16; target.mouthH=10 + petVoiceLevel*20.0f;
+            target.gazeX=-6; target.mouthW=16; target.mouthH=5;
+            target.eyeHL+=petVoiceLevel*8.0f; target.eyeHR+=petVoiceLevel*8.0f;
             target.mouthY=46; target.openMouth=true; target.soundWaves=true;
             target.accent=PET_SKY; break;
         case ui::PetMood::Surprised:
@@ -555,6 +556,11 @@ void DisplayManager::drawAIPet(bool pushToScreen) {
             target.accent=PET_MINT; break;
     }
 
+    if (petSpeaking) {
+        const float energy=petSpeechLevel<.025f?0.0f:petSpeechLevel;
+        target.mouthW=20+energy*28; target.mouthH=4+energy*34;
+        target.openMouth=true; target.soundWaves=false;
+    }
     const unsigned long now = millis();
     static float curEyeW=38,curEyeHL=56,curEyeHR=56,curEyeY=-10;
     static float curMouthW=34,curMouthH=6,curMouthY=47;
@@ -577,7 +583,8 @@ void DisplayManager::drawAIPet(bool pushToScreen) {
     const float lerp=.22f;
     curEyeW+=(target.eyeW-curEyeW)*lerp; curEyeHL+=(target.eyeHL-curEyeHL)*lerp;
     curEyeHR+=(target.eyeHR-curEyeHR)*lerp; curEyeY+=(target.eyeY-curEyeY)*lerp;
-    curMouthW+=(target.mouthW-curMouthW)*lerp; curMouthH+=(target.mouthH-curMouthH)*lerp;
+    const float mouthEase=petSpeaking?.6f:lerp;
+    curMouthW+=(target.mouthW-curMouthW)*mouthEase; curMouthH+=(target.mouthH-curMouthH)*mouthEase;
     curMouthY+=(target.mouthY-curMouthY)*lerp; curLid+=(target.eyelid-curLid)*lerp;
     curBrow+=(target.brow-curBrow)*lerp; curBlush+=(target.blush-curBlush)*lerp;
     const bool followingWheel = petLookUntil && static_cast<int32_t>(petLookUntil-now)>0;

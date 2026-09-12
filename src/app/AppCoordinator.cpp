@@ -27,7 +27,6 @@ unsigned long lastVoiceReaction = 0;
 unsigned long memoryPressureSince = 0;
 float micEnvelope = 0.0f;
 float micNoiseFloor = 0.012f;
-uint32_t heapReference = 0;
 uint32_t lastMicErrors = 0;
 uint8_t idleMoodIndex = 0;
 uint8_t touchReactionIndex = 0;
@@ -105,24 +104,26 @@ void AppCoordinator::update() {
 void AppCoordinator::updateAiPetBehavior() {
     const unsigned long now = millis();
 
-    // Convert the microphone's latest instantaneous sample into a smoothed envelope.
-    const float sample = abs(static_cast<int>(readMicData())) / 32768.0f;
+    // Whole capture frames avoid flickering on individual waveform samples.
+    const float sample = getMicrophoneVoiceLevel();
     micEnvelope = micEnvelope * 0.82f + sample * 0.18f;
     if (micEnvelope < micNoiseFloor * 2.0f) {
         micNoiseFloor = micNoiseFloor * 0.995f + micEnvelope * 0.005f;
     }
     if (micNoiseFloor < 0.006f) micNoiseFloor = 0.006f;
-    DISM.setPetVoiceLevel(micEnvelope);
+    DISM.petSpeaking = app::runtime.aiPetListening && aiConversation.isLiveProvider() && livePcmHasBufferedAudio();
+    DISM.petSpeechLevel = getLiveSpeechLevel() * 10.0f;
+    if (DISM.petSpeechLevel > 1.0f) DISM.petSpeechLevel = 1.0f;
+    DISM.setPetVoiceLevel(DISM.petSpeaking ? 0.0f : micEnvelope * 6.0f);
 
-    // Dynamic memory baseline: "busy" means a meaningful drop from this device's own normal state,
-    // not a hard-coded number that would make some builds permanently tired.
+    // TLS and Live audio buffers legitimately reduce free memory after connection.
+    // A percentage of the pre-connection high-water mark falsely reports pressure
+    // for the entire session. Only sustained low remaining memory is a warning.
     const uint32_t freeHeap = ESP.getFreeHeap();
     const uint32_t freePsram = ESP.getFreePsram();
-    if (freeHeap > heapReference) heapReference = freeHeap;
-    const bool heapPressure = heapReference > 0 && freeHeap < (heapReference * 58u) / 100u;
     const bool dangerouslyLowHeap = freeHeap < 36u * 1024u;
     const bool psramPressure = psramFound() && freePsram < 384u * 1024u;
-    const bool stressed = heapPressure || dangerouslyLowHeap || psramPressure;
+    const bool stressed = dangerouslyLowHeap || psramPressure;
 
     if (stressed) {
         if (!memoryPressureSince) memoryPressureSince = now;
@@ -147,6 +148,10 @@ void AppCoordinator::updateAiPetBehavior() {
         return;
     }
 
+    if (DISM.petSpeaking && (!DISM.isPetMoodHeld() || DISM.petMood == ui::PetMood::Listening)) {
+        DISM.setPetMood(ui::PetMood::Happy, "talking~", 500);
+        return;
+    }
     if (app::runtime.aiPetListening && !DISM.isPetMoodHeld()) {
         DISM.setPetMood(ui::PetMood::Listening, "I'm listening~", 650);
         return;
@@ -251,6 +256,23 @@ void AppCoordinator::reactToAiPetTouch() {
 
 void AppCoordinator::startAiPetListening() {
     if (app::runtime.aiPetListening || app::runtime.aiPetProcessing || !aiConversation.isConfigured()) return;
+
+    // Gemini Live keeps one bidirectional voice session open for the entire time
+    // AI Pet is on screen. No temporary WAV file or fixed 5-second turn is needed.
+    if (aiConversation.isLiveProvider()) {
+        if (!aiConversation.startLiveSession()) {
+            DISM.setPetMood(ui::PetMood::Dizzy, "can't reach Gemini...", 1800);
+            Serial.println("Unable to start Gemini Live AI Pet session");
+            return;
+        }
+        app::runtime.aiPetListening = true;
+        app::runtime.aiPetProcessing = false;
+        DISM.setPetMood(ui::PetMood::Listening, "connecting ears~", 1200);
+        Serial.println("AI Pet Gemini Live session starting...");
+        return;
+    }
+
+    // Legacy HTTP backend: record a short WAV, POST it, then play returned audioUrl.
     if (!enterRecordingMode() || !startRecording(AI_PET_RECORDING_PATH)) {
         exitRecordingMode();
         Serial.println("Unable to start AI Pet recording");
@@ -263,26 +285,38 @@ void AppCoordinator::startAiPetListening() {
 }
 
 void AppCoordinator::updateAiPetListening() {
-    if (app::runtime.aiPetListening) {
-        recordLoop();
-        if (millis() - app::runtime.aiPetRecordingStartedAt >= AI_PET_RECORDING_MS) {
-            exitRecordingMode();
-            app::runtime.aiPetListening = false;
-            app::runtime.aiPetProcessing = true;
-            DISM.setPetMood(ui::PetMood::Thinking, "let me think...", 1500);
-            if (xTaskCreatePinnedToCore(processAIPetVoice, "AIPetVoice", 8192, nullptr, 3, nullptr, 0) != pdPASS) {
-                app::runtime.aiPetProcessing = false;
-                DISM.setPetMood(ui::PetMood::Dizzy, "brain hiccup...", 1600);
-                Serial.println("Unable to create AI Pet task");
-            }
+    if (!app::runtime.aiPetListening) return;
+
+    if (aiConversation.isLiveProvider()) {
+        // The Gemini task owns the WebSocket/microphone queue. Keep the pet page
+        // responsive here; reconnection is handled inside AIConversation.
+        if (aiConversation.isLiveSessionReady() && !livePcmHasBufferedAudio() && !DISM.isPetMoodHeld()) {
+            DISM.setPetMood(ui::PetMood::Listening, "I'm listening~", 500);
+        }
+        return;
+    }
+
+    recordLoop();
+    if (millis() - app::runtime.aiPetRecordingStartedAt >= AI_PET_RECORDING_MS) {
+        exitRecordingMode();
+        app::runtime.aiPetListening = false;
+        app::runtime.aiPetProcessing = true;
+        DISM.setPetMood(ui::PetMood::Thinking, "let me think...", 1500);
+        if (xTaskCreatePinnedToCore(processAIPetVoice, "AIPetVoice", 8192, nullptr, 3, nullptr, 0) != pdPASS) {
+            app::runtime.aiPetProcessing = false;
+            DISM.setPetMood(ui::PetMood::Dizzy, "brain hiccup...", 1600);
+            Serial.println("Unable to create AI Pet task");
         }
     }
 }
 
 void AppCoordinator::stopAiPetListening() {
-    if (app::runtime.aiPetListening) {
+    if (aiConversation.isLiveProvider()) {
+        aiConversation.stopLiveSession();
+    } else if (app::runtime.aiPetListening) {
         exitRecordingMode();
     }
     app::runtime.aiPetListening = false;
+    app::runtime.aiPetProcessing = false;
     DISM.setPetVoiceLevel(0.0f);
 }

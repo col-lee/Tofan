@@ -55,6 +55,21 @@ unsigned long getMicrophoneLastSampleMillis();
 uint32_t getMicrophoneReadErrors();
 uint32_t getRecordingDroppedFrames();
 
+// Gemini Live / realtime voice transport. Microphone frames are 16-bit mono
+// PCM at 16 kHz; model output is queued as 16-bit mono PCM at 24 kHz.
+bool startLiveMicrophoneStream();
+void stopLiveMicrophoneStream();
+bool readLiveMicrophoneFrame(int16_t* output, size_t capacitySamples, size_t& sampleCount, TickType_t timeout = 0);
+
+bool startLivePcmOutput();
+void stopLivePcmOutput();
+void clearLivePcmOutput();
+bool queueLivePcmAudio(const uint8_t* data, size_t length, TickType_t timeout = 0);
+bool livePcmHasBufferedAudio();
+size_t livePcmBufferedBytes();
+float getMicrophoneVoiceLevel();
+float getLiveSpeechLevel();
+
 void detectWord();
 
 void audio_info(const char *info);

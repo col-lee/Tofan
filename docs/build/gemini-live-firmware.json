@@ -1,0 +1,12 @@
+{
+  "firmware": ".pio/build/esp32-s3-devkitc-1-n16r8v/firmware.bin",
+  "bytes": 2052864,
+  "sha256": "0e3a7847ce09e1787a31bf202cfb6084df9c682d78f1242067a142f8abd707de",
+  "embedded_web_assets_verified": 10,
+  "websocket_frame_limit": 131072,
+  "native_audio_regression": "passed",
+  "runtime_contracts": 18,
+  "hardware_flashed": false,
+  "live_service_tested": false,
+  "microphone_packet_regression": "passed: old -42 reproduced, full/partial PCM round-trip verified"
+}

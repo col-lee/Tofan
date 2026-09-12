@@ -2,6 +2,7 @@
 #include "SoundManager.hpp"
 #include "RecordingPath.hpp"
 #include "PlaybackEvents.hpp"
+#include "VoiceEnvelope.hpp"
 #include "../core/UserSettings.hpp"
 #include <atomic>
 #include <esp_heap_caps.h>
@@ -13,6 +14,9 @@
 #include "ToFan-project-1_inferencing.h"
 
 Audio audio;
+static VoiceEnvelope microphoneEnvelope, liveSpeechEnvelope;
+float getMicrophoneVoiceLevel() { return microphoneEnvelope.level(millis()); }
+float getLiveSpeechLevel() { return liveSpeechEnvelope.level(millis()); }
 bool isAudio_install;
 
 String currentFilePath = "";
@@ -131,6 +135,45 @@ static volatile unsigned long microphoneLastSampleMillis = 0;
 static volatile uint32_t microphoneReadErrors = 0;
 static volatile uint32_t recordingDroppedFrames = 0;
 
+// Realtime Gemini Live microphone transport. 512 samples at 16 kHz = 32 ms,
+// which keeps latency low without flooding the WebSocket with tiny packets.
+static constexpr uint16_t LIVE_MIC_FRAME_SAMPLES = sample_buffer_size / 4;
+static constexpr uint8_t LIVE_MIC_QUEUE_DEPTH = 16;
+struct LiveMicFrame {
+    uint16_t sampleCount;
+    int16_t samples[LIVE_MIC_FRAME_SAMPLES];
+};
+static LiveMicFrame* liveMicFrames = nullptr;
+static QueueHandle_t liveMicReadyQueue = nullptr;
+static QueueHandle_t liveMicFreeQueue = nullptr;
+static std::atomic<bool> liveMicStreaming{false};
+static std::atomic<uint32_t> liveMicDroppedFrames{0};
+
+// Gemini native audio arrives as mono 16-bit PCM at 24 kHz. Keep a generous
+// ~512 KiB queue in PSRAM so network bursts are decoupled from I2S playback.
+static constexpr size_t LIVE_PCM_BLOCK_BYTES = 4096;
+static constexpr uint16_t LIVE_PCM_BLOCK_COUNT = 128;
+struct LivePcmBlock {
+    uint16_t length;
+    uint32_t epoch;
+    uint8_t data[LIVE_PCM_BLOCK_BYTES];
+};
+static LivePcmBlock* livePcmBlocks = nullptr;
+static QueueHandle_t livePcmReadyQueue = nullptr;
+static QueueHandle_t livePcmFreeQueue = nullptr;
+static std::atomic<bool> livePcmEnabled{false};
+static std::atomic<bool> livePcmSpeaking{false};
+static std::atomic<size_t> livePcmQueuedBytes{0};
+static std::atomic<uint32_t> livePcmEpoch{0};
+
+static void subtractLivePcmQueuedBytes(size_t amount) {
+    size_t current = livePcmQueuedBytes.load();
+    while (true) {
+        const size_t next = current > amount ? current - amount : 0;
+        if (livePcmQueuedBytes.compare_exchange_weak(current, next)) return;
+    }
+}
+
 static void audio_inference_callback(uint32_t nSamples);
 static void capture_samples(void* arg);
 static bool microphone_inference_start(uint32_t nSamples);
@@ -159,6 +202,76 @@ static void releaseRecorderStorage() {
     if (recorderReadyQueue) { vQueueDelete(recorderReadyQueue); recorderReadyQueue = nullptr; }
     if (recorderFreeQueue) { vQueueDelete(recorderFreeQueue); recorderFreeQueue = nullptr; }
     if (recorderFrames) { heap_caps_free(recorderFrames); recorderFrames = nullptr; }
+}
+
+static void resetLiveMicQueues() {
+    if (!liveMicReadyQueue || !liveMicFreeQueue || !liveMicFrames) return;
+    xQueueReset(liveMicReadyQueue);
+    xQueueReset(liveMicFreeQueue);
+    for (uint8_t slot = 0; slot < LIVE_MIC_QUEUE_DEPTH; ++slot) xQueueSend(liveMicFreeQueue, &slot, 0);
+    liveMicDroppedFrames.store(0);
+}
+
+static void releaseLiveMicStorage() {
+    liveMicStreaming.store(false);
+    if (liveMicReadyQueue) { vQueueDelete(liveMicReadyQueue); liveMicReadyQueue = nullptr; }
+    if (liveMicFreeQueue) { vQueueDelete(liveMicFreeQueue); liveMicFreeQueue = nullptr; }
+    if (liveMicFrames) { heap_caps_free(liveMicFrames); liveMicFrames = nullptr; }
+}
+
+static bool ensureLiveMicStorage() {
+    if (liveMicFrames && liveMicReadyQueue && liveMicFreeQueue) return true;
+    // A previous partial allocation must not be overwritten on retry. This can
+    // happen when PSRAM allocation succeeds but one of the small FreeRTOS queues
+    // cannot be created because internal SRAM is fragmented.
+    if (liveMicFrames || liveMicReadyQueue || liveMicFreeQueue) releaseLiveMicStorage();
+
+    const uint32_t caps = psramFound() ? (MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT) : (MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    liveMicFrames = static_cast<LiveMicFrame*>(heap_caps_calloc(LIVE_MIC_QUEUE_DEPTH, sizeof(LiveMicFrame), caps));
+    if (!liveMicFrames && psramFound()) liveMicFrames = static_cast<LiveMicFrame*>(heap_caps_calloc(LIVE_MIC_QUEUE_DEPTH, sizeof(LiveMicFrame), MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
+    liveMicReadyQueue = xQueueCreate(LIVE_MIC_QUEUE_DEPTH, sizeof(uint8_t));
+    liveMicFreeQueue = xQueueCreate(LIVE_MIC_QUEUE_DEPTH, sizeof(uint8_t));
+    if (!liveMicFrames || !liveMicReadyQueue || !liveMicFreeQueue) {
+        releaseLiveMicStorage();
+        return false;
+    }
+    resetLiveMicQueues();
+    return true;
+}
+
+static void resetLivePcmQueues() {
+    if (!livePcmReadyQueue || !livePcmFreeQueue || !livePcmBlocks) return;
+    xQueueReset(livePcmReadyQueue);
+    xQueueReset(livePcmFreeQueue);
+    for (uint16_t slot = 0; slot < LIVE_PCM_BLOCK_COUNT; ++slot) xQueueSend(livePcmFreeQueue, &slot, 0);
+    livePcmQueuedBytes.store(0);
+    livePcmSpeaking.store(false);
+}
+
+static void releaseLivePcmStorage() {
+    livePcmEnabled.store(false);
+    livePcmSpeaking.store(false);
+    livePcmQueuedBytes.store(0);
+    if (livePcmReadyQueue) { vQueueDelete(livePcmReadyQueue); livePcmReadyQueue = nullptr; }
+    if (livePcmFreeQueue) { vQueueDelete(livePcmFreeQueue); livePcmFreeQueue = nullptr; }
+    if (livePcmBlocks) { heap_caps_free(livePcmBlocks); livePcmBlocks = nullptr; }
+}
+
+static bool ensureLivePcmStorage() {
+    if (livePcmBlocks && livePcmReadyQueue && livePcmFreeQueue) return true;
+    if (livePcmBlocks || livePcmReadyQueue || livePcmFreeQueue) releaseLivePcmStorage();
+
+    const uint32_t caps = psramFound() ? (MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT) : (MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    livePcmBlocks = static_cast<LivePcmBlock*>(heap_caps_calloc(LIVE_PCM_BLOCK_COUNT, sizeof(LivePcmBlock), caps));
+    if (!livePcmBlocks && psramFound()) livePcmBlocks = static_cast<LivePcmBlock*>(heap_caps_calloc(LIVE_PCM_BLOCK_COUNT, sizeof(LivePcmBlock), MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
+    livePcmReadyQueue = xQueueCreate(LIVE_PCM_BLOCK_COUNT, sizeof(uint16_t));
+    livePcmFreeQueue = xQueueCreate(LIVE_PCM_BLOCK_COUNT, sizeof(uint16_t));
+    if (!livePcmBlocks || !livePcmReadyQueue || !livePcmFreeQueue) {
+        releaseLivePcmStorage();
+        return false;
+    }
+    resetLivePcmQueues();
+    return true;
 }
 
 static int16_t convertI2SSample(int32_t rawSample) {
@@ -216,7 +329,10 @@ void initAudio(){
   }
   setOutputVolume(userSettings.values.volume);
   audio.setVolume(preferences::hardwareVolume(userSettings.values.volume));
-
+  if (!ensureLivePcmStorage()) Serial.println("[AUDIO] Unable to allocate Gemini Live PCM queue");
+  else Serial.printf("[AUDIO] Gemini Live output queue: %u KiB (%s)\n",
+                     static_cast<unsigned>((sizeof(LivePcmBlock) * LIVE_PCM_BLOCK_COUNT) / 1024),
+                     psramFound() ? "PSRAM preferred" : "internal RAM");
 
 }
 
@@ -317,21 +433,19 @@ static void capture_samples(void* arg) {
         if (sampleCount == 0) continue;
         microphoneLastSampleMillis = millis();
 
+        for (uint16_t index = 0; index < sampleCount; ++index) {
+            sampleBuffer[index] = convertI2SSample(raw32_buffer[index]);
+        }
+        microphoneLevel = sampleBuffer[sampleCount - 1];
+        microphoneEnvelope.push(sampleBuffer, sampleCount, millis());
+
         if (app::runtime.isRecordingMode) {
             if (!app::runtime.isRecording || !recorderFrames || !recorderReadyQueue || !recorderFreeQueue) continue;
-
             uint8_t slot = 0;
-            if (xQueueReceive(recorderFreeQueue, &slot, 0) != pdPASS) {
-                recordingDroppedFrames++;
-                continue;
-            }
+            if (xQueueReceive(recorderFreeQueue, &slot, 0) != pdPASS) { recordingDroppedFrames++; continue; }
             RecorderFrame& frame = recorderFrames[slot];
             frame.sampleCount = sampleCount;
-            for (uint16_t index = 0; index < sampleCount; ++index) {
-                frame.samples[index] = convertI2SSample(raw32_buffer[index]);
-            }
-            microphoneLevel = frame.samples[sampleCount - 1];
-
+            memcpy(frame.samples, sampleBuffer, sampleCount * sizeof(int16_t));
             if (!app::runtime.isRecording || xQueueSend(recorderReadyQueue, &slot, 0) != pdPASS) {
                 xQueueSend(recorderFreeQueue, &slot, 0);
                 recordingDroppedFrames++;
@@ -339,10 +453,22 @@ static void capture_samples(void* arg) {
             continue;
         }
 
-        for (uint16_t index = 0; index < sampleCount; ++index) {
-            sampleBuffer[index] = convertI2SSample(raw32_buffer[index]);
+        if (liveMicStreaming.load() && liveMicFrames && liveMicReadyQueue && liveMicFreeQueue) {
+            uint8_t slot = 0;
+            if (xQueueReceive(liveMicFreeQueue, &slot, 0) == pdPASS) {
+                LiveMicFrame& frame = liveMicFrames[slot];
+                frame.sampleCount = sampleCount;
+                memcpy(frame.samples, sampleBuffer, sampleCount * sizeof(int16_t));
+                if (xQueueSend(liveMicReadyQueue, &slot, 0) != pdPASS) {
+                    xQueueSend(liveMicFreeQueue, &slot, 0);
+                    liveMicDroppedFrames.fetch_add(1);
+                }
+            } else liveMicDroppedFrames.fetch_add(1);
+            // Local wake-word inference is unnecessary while a cloud live session owns the mic.
+            inference.buf_count = 0; inference.buf_ready = 0;
+            continue;
         }
-        microphoneLevel = sampleBuffer[sampleCount - 1];
+
         if (voiceAssistantEnabled.load()) audio_inference_callback(sampleCount);
         else { inference.buf_count=0; inference.buf_ready=0; }
     }
@@ -406,16 +532,25 @@ static bool microphone_inference_start(uint32_t n_samples)
         return false;
     }
     resetRecorderQueues();
+    if (!ensureLiveMicStorage()) {
+        Serial.println("[AUDIO] Unable to allocate Gemini Live microphone queue");
+        releaseRecorderStorage();
+        i2s_driver_uninstall(MIC_I2S_PORT);
+        freeInferenceBuffers();
+        return false;
+    }
 
-    Serial.printf("[AUDIO] Inference buffers: %u bytes x2 | recorder backlog: %u KiB | PSRAM=%s\n",
+    Serial.printf("[AUDIO] Inference buffers: %u bytes x2 | recorder backlog: %u KiB | live mic: %u KiB | PSRAM=%s\n",
                   static_cast<unsigned>(inferenceBytes),
                   static_cast<unsigned>((recorderBytes + 1023) / 1024),
+                  static_cast<unsigned>((sizeof(LiveMicFrame) * LIVE_MIC_QUEUE_DEPTH + 1023) / 1024),
                   psramFound() ? "yes" : "no");
 
     record_status = true;
     const BaseType_t taskCreated = xTaskCreate(capture_samples, "CaptureSamples", 4096,
                                                 nullptr, 10, &microphoneTask);
     if (taskCreated != pdPASS) {
+        releaseLiveMicStorage();
         releaseRecorderStorage();
         i2s_driver_uninstall(MIC_I2S_PORT);
         freeInferenceBuffers();
@@ -493,6 +628,93 @@ static int i2s_init(uint32_t samplingRate) {
 #endif
 
 
+bool startLiveMicrophoneStream() {
+    if (!microphoneReady || !ensureLiveMicStorage()) return false;
+    // Capture may still own a slot from the previous session. Rebuilding the
+    // free queue would publish that slot twice when capture returns it.
+    liveMicStreaming.store(false);
+    uint8_t slot = 0;
+    while (xQueueReceive(liveMicReadyQueue, &slot, 0) == pdPASS) xQueueSend(liveMicFreeQueue, &slot, 0);
+    liveMicStreaming.store(true);
+    Serial.println("[GEMINI] Live microphone stream enabled (16 kHz mono PCM)");
+    return true;
+}
+
+void stopLiveMicrophoneStream() {
+    liveMicStreaming.store(false);
+    // Leave ownership intact; the next start drains pending frames.
+}
+
+bool readLiveMicrophoneFrame(int16_t* output, size_t capacitySamples, size_t& sampleCount, TickType_t timeout) {
+    sampleCount = 0;
+    if (!output || !liveMicStreaming.load() || !liveMicFrames || !liveMicReadyQueue || !liveMicFreeQueue) return false;
+    uint8_t slot = 0;
+    if (xQueueReceive(liveMicReadyQueue, &slot, timeout) != pdPASS) return false;
+    const LiveMicFrame& frame = liveMicFrames[slot];
+    sampleCount = min(capacitySamples, static_cast<size_t>(frame.sampleCount));
+    memcpy(output, frame.samples, sampleCount * sizeof(int16_t));
+    xQueueSend(liveMicFreeQueue, &slot, 0);
+    return sampleCount > 0;
+}
+
+bool startLivePcmOutput() {
+    if (!ensureLivePcmStorage()) return false;
+    clearLivePcmOutput();
+    livePcmEnabled.store(true);
+    return true;
+}
+
+void clearLivePcmOutput() {
+    liveSpeechEnvelope.reset();
+    if (!livePcmReadyQueue || !livePcmFreeQueue || !livePcmBlocks) return;
+    livePcmEpoch.fetch_add(1);
+    uint16_t slot = 0;
+    while (xQueueReceive(livePcmReadyQueue, &slot, 0) == pdPASS) {
+        subtractLivePcmQueuedBytes(livePcmBlocks[slot].length);
+        xQueueSend(livePcmFreeQueue, &slot, 0);
+    }
+    // The audio task still owns its in-flight block. It will stop on the epoch
+    // change and release its own byte count; never zero that count from here.
+}
+
+void stopLivePcmOutput() {
+    livePcmEnabled.store(false);
+    clearLivePcmOutput();
+}
+
+bool queueLivePcmAudio(const uint8_t* data, size_t length, TickType_t timeout) {
+    if (!data || !length || !livePcmEnabled.load() || !ensureLivePcmStorage()) return false;
+    // PCM16 must remain sample aligned.
+    length &= ~static_cast<size_t>(1);
+    size_t offset = 0;
+    while (offset < length) {
+        uint16_t slot = 0;
+        if (xQueueReceive(livePcmFreeQueue, &slot, timeout) != pdPASS) return false;
+        LivePcmBlock& block = livePcmBlocks[slot];
+        block.epoch = livePcmEpoch.load();
+        block.length = static_cast<uint16_t>(min(LIVE_PCM_BLOCK_BYTES, length - offset));
+        block.length &= ~static_cast<uint16_t>(1);
+        memcpy(block.data, data + offset, block.length);
+        const size_t publishedLength = block.length;
+        // Account BEFORE publishing: the other core may consume/recycle this
+        // slot immediately inside xQueueSend, before this task runs again.
+        livePcmQueuedBytes.fetch_add(publishedLength);
+        if (xQueueSend(livePcmReadyQueue, &slot, timeout) != pdPASS) {
+            subtractLivePcmQueuedBytes(publishedLength);
+            xQueueSend(livePcmFreeQueue, &slot, 0);
+            return false;
+        }
+        offset += publishedLength;
+    }
+    return true;
+}
+
+bool livePcmHasBufferedAudio() {
+    return livePcmSpeaking.load() || livePcmQueuedBytes.load() > 0;
+}
+
+size_t livePcmBufferedBytes() { return livePcmQueuedBytes.load(); }
+
 void handleAudio(void *parameter) {
   // Keep the 1 KiB+ queue payload out of this task's stack.
   // ESP32-audioI2S also uses sizeable temporary stack buffers while opening files.
@@ -507,10 +729,89 @@ void handleAudio(void *parameter) {
   unsigned long lastVolumeUpdate = 0;
   unsigned long lastWsUpdate = 0;
   bool currentTrackIsVideoAudio = false;
+  bool liveOutputConfigured = false;
+  uint32_t liveStereoScratch[512];
 
   for(;;) {
     const int level=preferences::hardwareVolume(requestedVolume.load());
     if (level != volume) { audio.setVolume(level); volume=level; }
+
+    if (livePcmEnabled.load()) {
+      if (!liveOutputConfigured) {
+        audio.stopSong();
+        currentState = STATE_STOPPED;
+        isPlayingAudio = false;
+        hasPausedAudio = false;
+        currentTrackIsVideoAudio = false;
+        videoAudioPending.store(false); videoAudioActive.store(false); videoAudioClock.store(0);
+        i2s_set_sample_rates(static_cast<i2s_port_t>(audio.getI2sPort()), 24000);
+        liveOutputConfigured = true;
+        Serial.println("[GEMINI] Speaker switched to 24 kHz live PCM");
+      }
+
+      uint16_t liveSlot = 0;
+      if (livePcmReadyQueue && xQueueReceive(livePcmReadyQueue, &liveSlot, pdMS_TO_TICKS(2)) == pdPASS) {
+        LivePcmBlock& block = livePcmBlocks[liveSlot];
+        const uint32_t playbackEpoch = block.epoch;
+        livePcmSpeaking.store(true);
+        isPlayingAudio = true;
+        const int percent = preferences::clamp(requestedVolume.load(), 0, 100);
+        const int16_t* mono = reinterpret_cast<const int16_t*>(block.data);
+        size_t samples = block.length / sizeof(int16_t);
+        size_t done = 0;
+        while (done < samples && livePcmEnabled.load() && playbackEpoch == livePcmEpoch.load()) {
+          const size_t batch = min(static_cast<size_t>(512), samples - done);
+          for (size_t i = 0; i < batch; ++i) {
+            // Match ESP32-audioI2S headroom so Gemini speech does not clip at 100% volume.
+            int32_t scaled = (static_cast<int32_t>(mono[done + i]) * percent) / 200;
+            const uint16_t sample = static_cast<uint16_t>(static_cast<int16_t>(scaled));
+            liveStereoScratch[i] = (static_cast<uint32_t>(sample) << 16) | sample;
+          }
+          size_t batchDone = 0;
+          uint8_t stalledWrites = 0;
+          while (batchDone < batch && livePcmEnabled.load() && playbackEpoch == livePcmEpoch.load()) {
+            size_t writtenBytes = 0;
+            const esp_err_t writeResult = i2s_write(
+                static_cast<i2s_port_t>(audio.getI2sPort()),
+                liveStereoScratch + batchDone,
+                (batch - batchDone) * sizeof(uint32_t),
+                &writtenBytes,
+                pdMS_TO_TICKS(50));
+            const size_t writtenSamples = writtenBytes / sizeof(uint32_t);
+            if (writtenSamples > 0) {
+              // Meter only samples accepted by I2S, not fast-arriving network
+              // chunks. This keeps the face aligned with local playback.
+              liveSpeechEnvelope.push(mono + done + batchDone, writtenSamples, millis(), percent / 2);
+              batchDone += writtenSamples;
+              stalledWrites = 0;
+              continue;
+            }
+            if (++stalledWrites >= 3) {
+              Serial.printf("[GEMINI] I2S write stalled/failed (err=%d); dropping %u samples from current block\n",
+                            static_cast<int>(writeResult),
+                            static_cast<unsigned>(batch - batchDone));
+              break;
+            }
+            vTaskDelay(pdMS_TO_TICKS(1));
+          }
+          done += batchDone;
+          if (batchDone < batch) break;
+        }
+        subtractLivePcmQueuedBytes(block.length);
+        xQueueSend(livePcmFreeQueue, &liveSlot, 0);
+      } else {
+        livePcmSpeaking.store(false);
+        isPlayingAudio = false;
+        vTaskDelay(pdMS_TO_TICKS(1));
+      }
+      continue;
+    } else if (liveOutputConfigured) {
+      liveOutputConfigured = false;
+      livePcmSpeaking.store(false);
+      isPlayingAudio = false;
+      Serial.println("[GEMINI] Live PCM speaker released");
+    }
+
     if (xQueueReceive(audio_command, &cmd, 0) == pdPASS) {
       if (!playbackEvents.beginCommand(cmd.autoAdvanceFrom)) continue;
       if (!cmd.path.valid) { Serial.println("Audio path too long"); continue; }

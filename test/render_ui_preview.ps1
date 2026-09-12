@@ -4,12 +4,13 @@ $previewRoot = Join-Path (Split-Path $PSScriptRoot -Parent) 'docs/build/ui-previ
 function Color565([int]$value) {
     return [Drawing.Color]::FromArgb((($value -shr 11) -band 31)*255/31, (($value -shr 5) -band 63)*255/63, ($value -band 31)*255/31)
 }
-$sheet = [Drawing.Bitmap]::new(1344, 1120)
+$previewFiles = @(Get-ChildItem -LiteralPath $previewRoot -Filter '*.jsonl' | Sort-Object Name)
+$sheet = [Drawing.Bitmap]::new(1344, [int]([Math]::Max(1,[Math]::Ceiling($previewFiles.Count/4.0))*280))
 $canvas = [Drawing.Graphics]::FromImage($sheet)
 $canvas.Clear([Drawing.Color]::FromArgb(224,230,227))
 $labelFont = [Drawing.Font]::new('Segoe UI',12,[Drawing.FontStyle]::Regular,[Drawing.GraphicsUnit]::Pixel)
 $index = 0
-foreach ($file in (Get-ChildItem -LiteralPath $previewRoot -Filter '*.jsonl' | Sort-Object Name)) {
+foreach ($file in $previewFiles) {
     $bitmap = [Drawing.Bitmap]::new(640,480)
     $g = [Drawing.Graphics]::FromImage($bitmap)
     $g.ScaleTransform(2,2)

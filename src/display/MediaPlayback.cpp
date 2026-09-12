@@ -109,7 +109,6 @@ void GIFDraw(GIFDRAW *pDraw) {
 
   // รอคิวหน้าจอ
   if (xSemaphoreTake(displaySemaphore, portMAX_DELAY) == pdTRUE) {
-      if (pDraw->y == 0) Serial.println(">>> DRAWING 1 FRAME! <<<");
       // --- กรณีที่ 1: ภาพมีพื้นหลังโปร่งใส ---
       if (pDraw->ucHasTransparency) {
         uint8_t *pEnd, c, ucTransparent = pDraw->ucTransparent;
@@ -249,7 +248,6 @@ void handleDisplay(void *pvParameters) {
                     state=openVideo(lastPath)?STATE::PLAYING_VIDEO:STATE::IDLE;
                 } else if(pathLower.endsWith(".gif")){
                     if(DISM.openGif(lastPath.c_str())) {
-                        Serial.println("openedd.");
                         state = STATE::PLAYING_GIF;
                     } else {
                         state = STATE::IDLE;

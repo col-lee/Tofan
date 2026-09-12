@@ -99,6 +99,24 @@ void dispose(Upload* u) {
     if(u->temp.length()){Guard g(sdSemaphore);if(g.held){if(u->file)u->file.close();SD.remove(u->temp);}}
     if(u->owned){transfer=false;if(u->ota)updating=false;} delete u;
 }
+bool writeUploadChunkCooperative(File& file,const uint8_t* data,size_t length) {
+    constexpr size_t sliceBytes = 16 * 1024;
+    size_t offset = 0;
+    while (offset < length) {
+        const size_t slice = std::min(sliceBytes, length - offset);
+        if (xSemaphoreTake(sdSemaphore, pdMS_TO_TICKS(100)) != pdTRUE) return false;
+        const size_t written = file.write(data + offset, slice);
+        xSemaphoreGive(sdSemaphore);
+        if (written != slice) return false;
+        offset += written;
+
+        // Never yield while owning sdSemaphore. This keeps MJPEG/audio prefetch
+        // responsive even during large browser uploads.
+        taskYIELD();
+    }
+    return true;
+}
+
 void uploadChunk(AsyncWebServerRequest* r,String filename,size_t index,uint8_t* data,size_t len,bool final,bool ota) {
     auto* u=static_cast<Upload*>(r->_tempObject);
     if(!u) {
@@ -136,7 +154,9 @@ void uploadChunk(AsyncWebServerRequest* r,String filename,size_t index,uint8_t* 
             if(Update.write(u->header,sizeof(u->header))!=sizeof(u->header)){u->error=Update.errorString();return;}
         }
         if(u->started && used<len && Update.write(data+used,len-used)!=len-used){u->error=Update.errorString();return;}
-    } else { Guard g(sdSemaphore); if(!g.held||u->file.write(data,len)!=len){u->error="SD write failed";u->code=500;return;} }
+    } else {
+        if(!writeUploadChunkCooperative(u->file,data,len)){u->error="SD write failed";u->code=500;return;}
+    }
     u->received+=len; if(ota)otaStatus("uploading","",u->received,u->expected);
     if(final) { if(u->received!=u->expected){u->error="Incomplete upload";return;} u->finished=true; }
 }
@@ -434,7 +454,10 @@ void serviceWebPortal() {
         } else if(c.kind==Command::Wifi) {
             Preferences p;if(!p.begin("WiFiConfig",false))result="Cannot save WiFi";
             else{String ssid=d["ssid"]|"",pass=d["password"]|"";bool ok=p.putString("ssid",ssid)==ssid.length() && p.putString("password",pass)==pass.length();p.end();if(ok){userSettings.values.wifi=1;userSettings.values.admin=1;if(!userSettings.save())result="WiFi saved, but startup settings save failed";requestWiFiReconnect();}else result="Cannot save WiFi";}
-        } else {if(app::runtime.aiPetProcessing)result="AI busy; retry later";else if(!aiConversation.saveConfig(d))result="Cannot save AI configuration";}
+        } else {
+            if(app::runtime.aiPetProcessing || aiConversation.isLiveSessionActive()) result="Exit AI Pet before changing AI settings";
+            else if(!aiConversation.saveConfig(d)) result="Cannot save AI configuration";
+        }
         {Guard g(portalMutex);if(g.held){settingsResult=result;++settingsRevision;}}
     }
     static uint32_t last=0;if(millis()-last<1000)return;last=millis();

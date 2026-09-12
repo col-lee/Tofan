@@ -34,6 +34,12 @@ int main(){
     ui.drawMusicList();spr.save("10-tracks");
     ui.imageNames={"Beach.jpg","Clouds.jpg","Forest.gif"};ui.drawImageList();spr.save("11-pictures");
     ui.drawAIPet();spr.save("12-pet");
+    ui.petSpeaking=true;ui.petSpeechLevel=.8f;
+    for(int i=0;i<12;++i){simulatedMillis+=33;ui.drawAIPet();}spr.save("12-pet-speaking");
+    ui.petSpeechLevel=0;
+    for(int i=0;i<12;++i){simulatedMillis+=33;ui.drawAIPet();}spr.save("12-pet-pause");
+    ui.petSpeaking=false;ui.petMood=ui::PetMood::Listening;ui.petVoiceLevel=.8f;
+    for(int i=0;i<12;++i){simulatedMillis+=33;ui.drawAIPet();}spr.save("12-pet-listening");
     ui.debug();spr.save("13-devices");
     ui.settingsPage=ui::SettingsPage::Network;ui.drawSettings();spr.save("14-network");
     ui.drawPopupNoMusic();spr.save("15-connect");
