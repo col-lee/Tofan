@@ -5,6 +5,8 @@
 #include "../core/GlobalState.hpp"
 #include <WiFi.h>
 #include "../network/Network.hpp"
+#include "../food/FoodStore.hpp"
+#include "FoodFont.hpp"
 
 LGFX tft;
 LGFX_Sprite spr(&tft);
@@ -111,10 +113,12 @@ void DisplayManager::drawLoading(int percent, String text) {
 void DisplayManager::drawHomeMenu(bool pushToScreen) {
     if (!spr.getBuffer()) return;
     pageHeader("Home", "Your music, moments and little assistant");
-    const char* labels[]={"Media","Music","Settings","AI Pet","Devices","Recorder"};
+    const char* labels[]={"Media","Music","Settings","AI Pet","Devices","Recorder","Random foods"};
     const int cw=(tft.width()-44)/2;
-    for(int i=0;i<6;++i) {
-        int x=16+(i%2)*(cw+12),y=56+(i/2)*52;
+    const int start=(currentMenuIndex/6)*6;
+    for(int i=start;i<7 && i<start+6;++i) {
+        const int slot=i-start;
+        int x=16+(slot%2)*(cw+12),y=56+(slot/2)*52;
         const bool selected=i==currentMenuIndex;
         const uint16_t ink=selected?C_SELECT_TEXT:C_TEXT;
         spr.fillRoundRect(x,y,cw,44,12,selected?C_HILITE:C_CARD);
@@ -124,12 +128,51 @@ void DisplayManager::drawHomeMenu(bool pushToScreen) {
         else if(i==2) { for(int j=0;j<3;++j) spr.drawLine(x+12,y+14+j*8,x+32,y+14+j*8,ink); spr.fillCircle(x+19,y+14,3,ink); spr.fillCircle(x+27,y+22,3,ink); }
         else if(i==3) { spr.drawRoundRect(x+10,y+11,24,23,8,ink); spr.fillCircle(x+17,y+21,2,ink); spr.fillCircle(x+27,y+21,2,ink); }
         else if(i==4) { spr.drawRoundRect(x+12,y+10,20,24,4,ink); spr.fillCircle(x+22,y+29,2,ink); }
-        else { spr.fillRoundRect(x+19,y+10,8,17,4,ink); spr.drawRoundRect(x+15,y+15,16,16,7,ink); spr.drawLine(x+23,y+30,x+23,y+35,ink); }
-        spr.setTextDatum(ML_DATUM); spr.setTextColor(ink); spr.drawString(labels[i],x+43,y+22,2);
+        else if(i==5) { spr.fillRoundRect(x+19,y+10,8,17,4,ink); spr.drawRoundRect(x+15,y+15,16,16,7,ink); spr.drawLine(x+23,y+30,x+23,y+35,ink); }
+        else {spr.drawRoundRect(x+10,y+10,24,24,5,ink);spr.fillCircle(x+16,y+16,2,ink);spr.fillCircle(x+28,y+28,2,ink);spr.fillCircle(x+22,y+22,2,ink);}
+        spr.setTextDatum(ML_DATUM); spr.setTextColor(ink); spr.drawString(labels[i],x+43,y+22,i==6?1:2);
     }
-    footer("Turn to browse  /  Press to open");
+    footer(start?"2/2  Turn to browse / Press to open":"1/2  Turn to browse / Press to open");
     isAnimatingMenu=false; animatedMenuIndex=animatedMenuIndex_target;
     present(pushToScreen);
+}
+
+void DisplayManager::drawFoods(bool pushToScreen) {
+    if (!spr.getBuffer()) return;
+    const auto v=foodStore.view();
+    pageHeader("Random foods", "Turn: category / Press: random");
+    String category="ทุกหมวดหมู่";
+    for(const auto& c:v.categories)if(c.id==v.category)category=c.name;
+    spr.fillRoundRect(16,58,288,36,12,C_HILITE);
+    spr.setTextDatum(MC_DATUM);spr.setTextColor(C_SELECT_TEXT);spr.setFont(&foodFont);
+    spr.drawString(category,160,76);
+    spr.fillRoundRect(16,100,288,116,16,C_CARD);
+    spr.setTextColor(C_TEXT);
+    if(v.result.length()) {
+        // Wrap at UTF-8 character boundaries so Thai names never split a byte sequence.
+        std::vector<String> lines;
+        float size=2;
+        do {
+            spr.setTextSize(size);lines.clear();String line;
+            for(size_t i=0;i<v.result.length();) {
+                size_t end=i+1;while(end<v.result.length()&&(static_cast<uint8_t>(v.result[end])&0xc0)==0x80)++end;
+                String next=v.result.substring(i,end);
+                if(spr.textWidth(line+next)>260){lines.push_back(line);line="";}
+                line+=next;i=end;
+            }
+            lines.push_back(line);
+            if(lines.size()<=3 || size<=1)break;
+            size-=0.5f;
+        }while(true);
+        int spacing=static_cast<int>(18*size),y=158-(lines.size()-1)*spacing/2;
+        for(const auto& line:lines){spr.drawString(line,160,y);y+=spacing;}
+    }else {
+        spr.setTextFont(1);
+        spr.drawString(v.count?"Press to pick a meal":"No menus in this category",160,144,2);
+        spr.drawString("Manage menus on the website",160,177,1);
+    }
+    spr.setTextSize(1);
+    footer(v.spinning?"Picking... / Back: home":String(v.count)+" choices / Press: again");present(pushToScreen);
 }
 
 void DisplayManager::drawMusicPlayer(String songName, int progress, bool isPlaying, bool pushToScreen) {
@@ -469,11 +512,14 @@ void DisplayManager::setPetVoiceLevel(float level) {
 void DisplayManager::drawAIPet(bool pushToScreen) {
     if (spr.getBuffer() == nullptr) return;
 
-    // Fixed AI Pet palette: deliberately NOT connected to the user UI theme.
-    const uint16_t PET_BG       = tft.color565(14, 17, 30);
+    // Personality stays visible during listening, speaking and temporary moods.
+    const bool custom=userSettings.values.petPersonality==8;
+    const unsigned personality=custom?userSettings.customPet.base:userSettings.values.petPersonality;
+    const auto look=custom?pet::appearance(userSettings.customPet):pet::appearance(personality);
+    const uint16_t PET_BG       = preferences::rgb565(look.background);
     const uint16_t PET_PANEL    = tft.color565(29, 34, 52);
-    const uint16_t PET_FACE     = tft.color565(255, 244, 230);
-    const uint16_t PET_BLUSH    = tft.color565(255, 137, 174);
+    const uint16_t PET_FACE     = preferences::rgb565(look.face);
+    const uint16_t PET_BLUSH    = preferences::rgb565(look.cheeks);
     const uint16_t PET_MINT     = tft.color565(111, 232, 201);
     const uint16_t PET_SKY      = tft.color565(123, 203, 255);
     const uint16_t PET_YELLOW   = tft.color565(255, 220, 116);
@@ -556,6 +602,13 @@ void DisplayManager::drawAIPet(bool pushToScreen) {
             target.accent=PET_MINT; break;
     }
 
+    target.eyeW*=look.eyeWidth;target.eyeHL*=look.eyeHeight;target.eyeHR*=look.eyeHeight;
+    target.blush*=look.blush;
+    if(personality||custom)target.accent=preferences::rgb565(look.accent);
+    if(personality==1)target.sparkles=true;
+    const bool cheeky=personality==6 && petMood==ui::PetMood::Neutral && !petSpeaking;
+    if(cheeky){target.eyeHL*=.4f;target.mouthW=38;target.mouthH=5;}
+    if(personality==7&&!target.xEyes){target.brow=18;if(!petSpeaking){target.mouthW=46;target.mouthH=6;}}
     if (petSpeaking) {
         const float energy=petSpeechLevel<.025f?0.0f:petSpeechLevel;
         target.mouthW=20+energy*28; target.mouthH=4+energy*34;
@@ -635,7 +688,7 @@ void DisplayManager::drawAIPet(bool pushToScreen) {
             spr.drawLine(faceX+spacing-r,faceY-12+r+o,faceX+spacing+r,faceY-12-r+o,PET_FACE);
         }
     }else{
-        const int radius=14;
+        const int radius=look.radius;
         spr.fillRoundRect(eyeLX,eyeLY,static_cast<int>(curEyeW),static_cast<int>(curEyeHL),radius,PET_FACE);
         spr.fillRoundRect(eyeRX,eyeRY,static_cast<int>(curEyeW),static_cast<int>(curEyeHR),radius,PET_FACE);
         if(curLid>1){
@@ -648,6 +701,18 @@ void DisplayManager::drawAIPet(bool pushToScreen) {
         }
     }
 
+    if(personality==3 && !target.xEyes){
+        // Round spectacles follow the eyes without covering the mouth animation.
+        spr.drawRoundRect(eyeLX-7,eyeLY-7,static_cast<int>(curEyeW)+14,static_cast<int>(curEyeHL)+14,14,target.accent);
+        spr.drawRoundRect(eyeRX-7,eyeRY-7,static_cast<int>(curEyeW)+14,static_cast<int>(curEyeHR)+14,14,target.accent);
+        spr.drawLine(eyeLX+static_cast<int>(curEyeW)+7,faceY-10,eyeRX-7,faceY-10,target.accent);
+    }
+    if(personality==4){
+        spr.fillTriangle(faceX-22,faceY-66,faceX-25,faceY-84,faceX-6,faceY-71,target.accent);
+        spr.fillTriangle(faceX-12,faceY-66,faceX,faceY-89,faceX+12,faceY-66,target.accent);
+        spr.fillTriangle(faceX+6,faceY-71,faceX+25,faceY-84,faceX+22,faceY-66,target.accent);
+        spr.fillRoundRect(faceX-22,faceY-68,44,5,2,target.accent);
+    }
     const int mouthX=faceX, mouthY=faceY+static_cast<int>(curMouthY);
     const int mouthW=static_cast<int>(curMouthW), mouthH=static_cast<int>(curMouthH);
     if(target.openMouth && mouthH>8){
@@ -662,6 +727,19 @@ void DisplayManager::drawAIPet(bool pushToScreen) {
     }
 
     // Mood decorations.
+    if(cheeky||personality==7){
+        spr.drawLine(mouthX+mouthW/2-2,mouthY,mouthX+mouthW/2+7,mouthY-7,PET_FACE);
+        spr.drawLine(mouthX+mouthW/2-2,mouthY+1,mouthX+mouthW/2+7,mouthY-6,PET_FACE);
+    }
+    if(personality==7){
+        // Slashed eyebrow marks and pointed horns reinforce the fierce expression.
+        spr.fillTriangle(faceX-103,faceY-47,faceX-112,faceY-78,faceX-82,faceY-58,target.accent);
+        spr.fillTriangle(faceX+103,faceY-47,faceX+112,faceY-78,faceX+82,faceY-58,target.accent);
+        for(int offset=0;offset<3;++offset){
+            spr.drawLine(eyeLX-4,eyeLY-10-offset,eyeLX+static_cast<int>(curEyeW),eyeLY+2-offset,target.accent);
+            spr.drawLine(eyeRX,eyeRY+2-offset,eyeRX+static_cast<int>(curEyeW)+4,eyeRY-10-offset,target.accent);
+        }
+    }
     if(target.sweat){
         spr.fillTriangle(faceX+spacing+37,faceY-43,faceX+spacing+29,faceY-27,faceX+spacing+44,faceY-27,PET_SKY);
         spr.fillCircle(faceX+spacing+36,faceY-26,7,PET_SKY);

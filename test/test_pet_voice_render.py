@@ -18,3 +18,7 @@ assert max(mouth(frames['speaking']))>=24
 assert max(mouth(frames['pause']))<=5
 assert any(op['op']=='ellipse-outline' for op in frames['listening'])
 print('PASS: production renderer opens mouth for speech, closes during pause, and draws listening waves')
+
+custom=[json.loads(line) for line in (root/'docs/build/ui-preview/pet-custom-shaped.jsonl').read_text().splitlines()]
+assert any(op['op']=='ellipse' and op['a'][2]>=26 and op['a'][3]>=11 for op in custom), 'Custom cheek size must survive Savage expression'
+print('PASS: custom cheek size is retained with the Savage base expression')

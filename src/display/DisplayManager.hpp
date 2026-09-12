@@ -47,7 +47,8 @@ enum class State {
     APP_ONLINE_MUSIC,
     APP_PET,
     DEBUG,
-    RECORDE
+    RECORDE,
+    APP_FOODS
 };
 
 } // namespace ui
@@ -103,6 +104,7 @@ public:
     float petVoiceLevel = 0.0f;
     float petSpeechLevel = 0.0f;
     bool petSpeaking = false;
+    int foodCategoryIndex = 0;
     uint32_t petInteractionCount = 0;
     int petLookDirection = 0;
     unsigned long petLookUntil = 0;
@@ -163,6 +165,7 @@ public:
     void drawSettings(bool pushToScreen = true);
 
     void drawAIPet(bool pushToScreen = true);
+    void drawFoods(bool pushToScreen = true);
     void setPetMood(ui::PetMood mood, const char* message = nullptr, unsigned long holdMs = 0);
     bool isPetMoodHeld() const;
     void setPetVoiceLevel(float level);

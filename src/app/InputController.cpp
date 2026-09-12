@@ -9,6 +9,7 @@
 #include "../core/GlobalState.hpp"
 #include "../core/MediaNavigation.hpp"
 #include "../core/UserSettings.hpp"
+#include "../food/FoodStore.hpp"
 #include <AiEsp32RotaryEncoder.h>
 
 InputController inputController;
@@ -34,6 +35,7 @@ void drawCurrent() {
         case UI_STATE::GLOBAL_VOLUME: DISM.drawVolumeOverlay(); break;
         case UI_STATE::POPUP_NO_MUSIC: DISM.drawPopupNoMusic(); break;
         case UI_STATE::APP_PET: DISM.drawAIPet(); break;
+        case UI_STATE::APP_FOODS: DISM.drawFoods(); break;
         case UI_STATE::RECORDE: DISM.recorde(); break;
         case UI_STATE::DEBUG: DISM.debug(); break;
         default: break;
@@ -42,7 +44,12 @@ void drawCurrent() {
 void configureEncoder() {
     int maximum=0,value=0; bool wrap=true;
     switch(DISM.currentState) {
-        case UI_STATE::HOME_MENU: maximum=5;value=DISM.currentMenuIndex;break;
+        case UI_STATE::HOME_MENU: maximum=6;value=DISM.currentMenuIndex;break;
+        case UI_STATE::APP_FOODS: {
+            auto v=foodStore.view();maximum=v.categories.size();DISM.foodCategoryIndex=0;
+            for(size_t i=0;i<v.categories.size();++i)if(v.categories[i].id==v.category)DISM.foodCategoryIndex=i+1;
+            value=DISM.foodCategoryIndex;break;
+        }
         case UI_STATE::APP_MUSIC: maximum=4;value=DISM.currentMusicControlIndex;break;
         case UI_STATE::APP_ONLINE_MUSIC: maximum=3;value=DISM.currentMusicControlIndex;break;
         case UI_STATE::APP_MUSIC_LIST: maximum=media::lastIndex(DISM.playlistPaths.size());value=DISM.playlistSelectedIndex;break;
@@ -137,11 +144,12 @@ void InputController::update() {
     if(finished && userSettings.values.autoNext) nextTrack(finished);
     if(volumeDirty && millis()-lastVolumeChange>500) { saveSettings(); volumeDirty=false; }
     if(DISM.currentState==UI_STATE::GLOBAL_VOLUME && millis()-lastVolActivityTime>2000) finishVolume();
-    if(millis()-lastRefresh>=200) {
+    if(millis()-lastRefresh>=(DISM.currentState==UI_STATE::APP_FOODS?40:200)) {
         lastRefresh=millis();
         switch(DISM.currentState) {
             case UI_STATE::APP_MUSIC: case UI_STATE::APP_ONLINE_MUSIC:
             case UI_STATE::APP_SETTINGS: case UI_STATE::DEBUG: case UI_STATE::RECORDE: drawCurrent(); break;
+            case UI_STATE::APP_FOODS: configureEncoder();drawCurrent();break;
             default:break;
         }
     }
@@ -152,6 +160,7 @@ void InputController::handleInput() {
     if(rotaryEncoder.encoderChanged()) {
         const int value=rotaryEncoder.readEncoder();
         switch(DISM.currentState) {
+            case UI_STATE::APP_FOODS: DISM.foodCategoryIndex=value;foodStore.roll(value,false);break;
             case UI_STATE::APP_PET:
                 appCoordinator.reactToAiPetRotation(value);
                 rotaryEncoder.setEncoderValue(0);
@@ -194,6 +203,7 @@ void InputController::handleInput() {
                 case 5:
                     if(enterRecordingMode()) { DISM.seconds=0;DISM.previousMillis=millis();enter(UI_STATE::RECORDE); }
                     break;
+                case 6: foodStore.roll(0,false);enter(UI_STATE::APP_FOODS);break;
             }
         } else if(DISM.currentState==UI_STATE::APP_DISPLAY_LIST) {
             if(media::validIndex(DISM.imageSelectedIndex,DISM.imagePaths.size())) {
@@ -234,6 +244,8 @@ void InputController::handleInput() {
         } else if(DISM.currentState==UI_STATE::APP_COLOR_PICKER) {
             if(DISM.colorPhase<2) { ++DISM.colorPhase;configureEncoder();drawCurrent(); }
             else { saveSettings();enter(UI_STATE::APP_SETTINGS); }
+        } else if(DISM.currentState==UI_STATE::APP_FOODS) {
+            foodStore.roll(DISM.foodCategoryIndex,true);drawCurrent();
         } else if(DISM.currentState==UI_STATE::APP_PET) {
             appCoordinator.reactToAiPetTouch();
             drawCurrent();

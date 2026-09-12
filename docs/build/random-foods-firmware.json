@@ -1,0 +1,13 @@
+{
+  "firmware": ".pio\\build\\esp32-s3-devkitc-1-n16r8v\\firmware.bin",
+  "bytes": 2077072,
+  "sha256": "0acc6a0a204b6621ade9d85d17b047fe589d39804f0fcc3eb701e5f671f07c52",
+  "built_at": "2026-09-12T08:29:56.066698+00:00",
+  "tests": [
+    "FoodStore host animation and persistence: passed",
+    "Chrome food animation and mobile layout: passed",
+    "Input controller host: passed",
+    "Embedded web asset equality: passed"
+  ],
+  "flashed": false
+}

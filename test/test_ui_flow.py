@@ -20,6 +20,10 @@ int pdMS_TO_TICKS(int ticks){return ticks;}
 void vTaskDelay(int){}
 uint32_t esp_random(){return 7;}
 int audio_command=1,display_command=2;
+struct FoodCategory { int id; String name; };
+struct FoodView { std::vector<FoodCategory> categories; int category=0; };
+struct FoodMock { FoodView view(){return {{{1,"Meals"}},0};} void roll(int,bool){} } foodStore;
+void DisplayManager::drawFoods(bool){}
 DisplayManager DISM;
 int saveCount=0,appliedVolume=-1;
 bool appliedVoice=false;
@@ -90,7 +94,7 @@ int main(){
     for(int i=0;i<2100;++i) turn(1);
     assert(DISM.petInteractionCount==interactions+2100 && rotaryEncoder.position==0);
     press();assert(appCoordinator.touches==1);back();
-    assert(DISM.currentState==UI_STATE::HOME_MENU && rotaryEncoder.maximum==5);
+    assert(DISM.currentState==UI_STATE::HOME_MENU && rotaryEncoder.maximum==6);
     auto beforeHome=DISM.petInteractionCount;appCoordinator.reactToAiPetRotation(1);
     assert(DISM.petInteractionCount==beforeHome);
     turn(2);press();assert(DISM.settingsPage==Page::Root && rotaryEncoder.maximum==3);
@@ -116,6 +120,7 @@ int main(){
     back();turn(5);press();assert(DISM.currentState==UI_STATE::RECORDE);
     press();assert(app::runtime.isRecording);press();assert(!app::runtime.isRecording);
     back();assert(!app::runtime.isRecordingMode && DISM.currentState==UI_STATE::HOME_MENU);
+    turn(6);press();assert(DISM.currentState==UI_STATE::APP_FOODS && rotaryEncoder.maximum==1);turn(1);press();back();assert(DISM.currentState==UI_STATE::HOME_MENU);
     std::puts("PASS: AIpet rotary direction/speed/continuous input/busy state/touch/back, navigation, settings, volume, display and recording");
 }
 '''

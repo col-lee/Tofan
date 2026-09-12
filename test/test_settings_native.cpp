@@ -61,6 +61,7 @@ static void persistence_roundtrip() {
     first.values.volume=75;first.values.volumeStep=3;
     first.values.wifi=1;first.values.admin=1;first.values.voice=1;
     first.values.autoNext=0;first.values.shuffle=1;
+    first.values.petPersonality=5;
     for(auto& color:first.values.colors) color={235,22,91};
     assert(first.save());
     UserSettings rebooted;rebooted.begin();
@@ -76,6 +77,7 @@ static void invalid_values() {
     values=preferences::Values{};values.volumeStep=1;assert(!preferences::valid(values));
     values=preferences::Values{};values.colors[0].hue=360;assert(!preferences::valid(values));
     values=preferences::Values{};values.voice=2;assert(!preferences::valid(values));
+    values=preferences::Values{};values.petPersonality=pet::personalityCount;assert(!preferences::valid(values));
     preferences::Record record;record.checksum=preferences::checksum(record.values);record.version=99;
     assert(!preferences::decode(record,values));
 }

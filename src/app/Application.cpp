@@ -2,6 +2,7 @@
 #include "Application.hpp"
 #include "../network/WebPortal.hpp"
 #include "../core/UserSettings.hpp"
+#include "../food/FoodStore.hpp"
 #include <Arduino.h>
 #include "../core/Commands.hpp"
 #include "../core/SharedResources.hpp"
@@ -36,6 +37,7 @@ static void initializeSystem() {
     }
 
     userSettings.begin();
+    foodStore.begin();
     DISM.applyTheme();
     DISM.initDisplay();
     ioManager.initPins();

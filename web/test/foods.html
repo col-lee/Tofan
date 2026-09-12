@@ -1,0 +1,7 @@
+<!doctype html><html lang="th"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/style.css"><body style="padding:16px"><main id="content"></main><div id="voice"></div><script type="module">
+import {mountFoods} from '/foods.mjs';import {ask,enhanceControls} from '/components.mjs';import {voiceSelect} from '/gemini-voices.mjs';
+const escape=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+window.catalog={categories:[{id:1,name:'Meals'}],items:[],result:''};let id=2;
+const api=async(path,body)=>{const c=window.catalog;if(body){const p=JSON.parse(body.values);if(p.action==='category')c.categories.push({id:id++,name:p.name});if(p.action==='item'){const f=c.items.find(f=>f.id===p.id);if(f)Object.assign(f,p);else c.items.push({...p,id:id++});}if(p.action==='draw')c.result=c.items.find(f=>!p.category||f.category===p.category)?.name||'';if(p.action==='deleteItem')c.items=c.items.filter(f=>f.id!==p.id);}return structuredClone(c);};
+await mountFoods({root:document.querySelector('#content'),api,ask,notice:message=>{throw Error(message);},enhanceControls,escape});document.querySelector('#voice').innerHTML=voiceSelect('Sulafat',escape);enhanceControls();
+</script></body></html>

@@ -1,0 +1,15 @@
+{
+  "firmware": ".pio\\build\\esp32-s3-devkitc-1-n16r8v\\firmware.bin",
+  "bytes": 2087680,
+  "sha256": "9ef1c483015476b277b83b748ac31e406e5ba1bdbb0e61f866711464ccd7514f",
+  "built_at": "2026-09-12T10:01:28.389117+00:00",
+  "tests": [
+    "nine profiles and custom NVS persistence: passed",
+    "custom invalid values, failed writes and corruption: passed",
+    "browser custom colors, shape, voice, prompt, reload, UTF-8 limits, mobile: passed",
+    "production speech and custom cheek rendering: passed",
+    "settings and input regression: passed",
+    "embedded asset equality: passed"
+  ],
+  "flashed": false
+}

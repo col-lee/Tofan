@@ -7,6 +7,7 @@
 #include "../audio/SoundManager.hpp"
 #include "../display/DisplayManager.hpp"
 #include "../ai/AIConversation.hpp"
+#include "../food/FoodStore.hpp"
 #include <esp_ota_ops.h>
 #include <esp_http_client.h>
 #include <esp_heap_caps.h>
@@ -383,6 +384,16 @@ void registerWebPortal(AsyncWebServer& server) {
         JsonDocument d;d["ssid"]=ssid;d["password"]=pass;String out;serializeJson(d,out);enqueue(r,Command::Wifi,out);
     });
     server.on("/api/ai",AsyncWebRequestMethod::HTTP_POST,[](AsyncWebServerRequest* r){if(authorized(r,true))enqueue(r,Command::AI,param(r,"values"));});
+    server.on("/api/foods",AsyncWebRequestMethod::HTTP_GET,[](AsyncWebServerRequest* r){
+        if(!authorized(r))return;auto* response=r->beginResponse(200,"application/json",foodStore.snapshot());response->addHeader("Cache-Control","no-store");r->send(response);
+    });
+    server.on("/api/foods",AsyncWebRequestMethod::HTTP_POST,[](AsyncWebServerRequest* r){
+        if(!authorized(r,true))return;if(updating.load()){reply(r,409,"Firmware update in progress");return;}
+        String body=param(r,"values");JsonDocument d;
+        if(body.length()>512||deserializeJson(d,body)||!d.is<JsonObject>()){reply(r,400,"Invalid food request");return;}
+        String error=foodStore.change(d);if(error.length()){reply(r,400,error);return;}
+        r->send(200,"application/json",foodStore.snapshot());
+    });
     server.on("/api/files",AsyncWebRequestMethod::HTTP_GET,[](AsyncWebServerRequest* r){if(!authorized(r))return;String dir=param(r,"dir",false);
         if(!portal::directory(dir.c_str())){reply(r,400,"Invalid directory");return;}
         JsonDocument d;auto files=d["files"].to<JsonArray>();{Guard g(sdSemaphore);if(!g.held||!isConnectSDcard){reply(r,503,"SD unavailable");return;}
@@ -442,12 +453,25 @@ void serviceWebPortal() {
     if(!updating && xQueueReceive(commands,&c,0)==pdTRUE) {
         JsonDocument d;String result="Settings saved";
         if(deserializeJson(d,c.body))result="Invalid settings JSON";
+        else if(c.kind==Command::Settings && !d["customPet"].isNull()) {
+            auto value=userSettings.customPet;JsonVariant json=d["customPet"];bool valid=d.size()==1&&json.is<JsonObject>();
+            const char* colorKeys[]={"background","face","accent","cheeks"};
+            uint32_t* colors[]={&value.background,&value.face,&value.accent,&value.cheeks};
+            for(int i=0;i<4;++i)if(!json[colorKeys[i]].isNull()){if(!json[colorKeys[i]].is<uint32_t>()||json[colorKeys[i]].as<uint32_t>()>0xffffff)valid=false;else *colors[i]=json[colorKeys[i]].as<uint32_t>();}
+            const char* keys[]={"eyeWidth","eyeHeight","blush","radius","base"};
+            uint8_t* fields[]={&value.eyeWidth,&value.eyeHeight,&value.blush,&value.radius,&value.base};
+            for(int i=0;i<5;++i)if(!json[keys[i]].isNull()){int n=json[keys[i]]|-1;if(!json[keys[i]].is<int>()||n<0||n>255)valid=false;else *fields[i]=n;}
+            if(!json["voice"].isNull()){const char* v=json["voice"].as<const char*>();if(!v||!strlen(v)||strlen(v)>=sizeof(value.voice))valid=false;else strlcpy(value.voice,v,sizeof(value.voice));}
+            if(!json["prompt"].isNull()){const char* v=json["prompt"].as<const char*>();if(!v||!strlen(v)||strlen(v)>=sizeof(value.prompt))valid=false;else strlcpy(value.prompt,v,sizeof(value.prompt));}
+            if(!valid||!pet::valid(value))result="Invalid custom pet values (prompt max 511 UTF-8 bytes)";
+            else if(!userSettings.saveCustomPet(value))result="Custom pet save failed";
+        }
         else if(c.kind==Command::Settings) {
             auto v=userSettings.values;
             // Reject out-of-range values before narrowing to uint8_t.
-            bool valid=true;const char* keys[]={"volume","volumeStep","voice","autoNext","shuffle","wifi","admin"};
-            uint8_t* fields[]={&v.volume,&v.volumeStep,&v.voice,&v.autoNext,&v.shuffle,&v.wifi,&v.admin};
-            for(int i=0;i<7;i++)if(!d[keys[i]].isNull()){int n=d[keys[i]].as<int>();if(!d[keys[i]].is<int>()||n<0||n>100)valid=false;else *fields[i]=n;}
+            bool valid=true;const char* keys[]={"volume","volumeStep","voice","autoNext","shuffle","wifi","admin","petPersonality"};
+            uint8_t* fields[]={&v.volume,&v.volumeStep,&v.voice,&v.autoNext,&v.shuffle,&v.wifi,&v.admin,&v.petPersonality};
+            for(int i=0;i<8;i++)if(!d[keys[i]].isNull()){int n=d[keys[i]].as<int>();if(!d[keys[i]].is<int>()||n<0||n>100)valid=false;else *fields[i]=n;}
             if(d["colors"].is<JsonArray>()){auto colors=d["colors"].as<JsonArray>();if(colors.size()!=preferences::ColorCount)valid=false;else for(int i=0;i<preferences::ColorCount;i++){int h=colors[i][0]|-1,s=colors[i][1]|-1,b=colors[i][2]|-1;if(h<0||h>=360||s<0||s>100||b<0||b>100)valid=false;else v.colors[i]={static_cast<uint16_t>(h),static_cast<uint8_t>(s),static_cast<uint8_t>(b)};}}
             if(!valid||!preferences::valid(v))result="Invalid settings values";
             else {auto previous=userSettings.values;userSettings.values=v;if(!userSettings.save()){userSettings.values=previous;result="Settings save failed";}else {setOutputVolume(v.volume);setVoiceAssistantEnabled(v.voice);DISM.applyTheme();if(v.wifi!=previous.wifi||v.admin!=previous.admin)requestNetworkSettings(v.wifi,v.admin);}}
@@ -466,7 +490,10 @@ void serviceWebPortal() {
     d["sd"]=isConnectSDcard;{Guard g(sdSemaphore);if(g.held && isConnectSDcard){d["storageTotal"]=SD.totalBytes();d["storageUsed"]=SD.usedBytes();}}
     d["playing"]=isPlayingAudio;d["title"]=currentSongTitle;d["current"]=currentAudioTime;d["duration"]=totalAudioDuration;d["recording"]=app::runtime.isRecording;d["busy"]=transfer.load();
     {Guard g(portalMutex);if(g.held){d["audioImportState"]=audioImportState;d["audioImportError"]=audioImportError;d["audioImportDone"]=audioImportDone;d["audioImportTotal"]=audioImportTotal;}}
-    auto s=d["settings"].to<JsonObject>();const auto& v=userSettings.values;s["volume"]=v.volume;s["volumeStep"]=v.volumeStep;s["voice"]=v.voice;s["autoNext"]=v.autoNext;s["shuffle"]=v.shuffle;s["wifi"]=v.wifi;s["admin"]=v.admin;
+    auto custom=d["customPet"].to<JsonObject>();const auto& cp=userSettings.customPet;
+    custom["background"]=cp.background;custom["face"]=cp.face;custom["accent"]=cp.accent;custom["cheeks"]=cp.cheeks;
+    custom["eyeWidth"]=cp.eyeWidth;custom["eyeHeight"]=cp.eyeHeight;custom["blush"]=cp.blush;custom["radius"]=cp.radius;custom["base"]=cp.base;custom["voice"]=cp.voice;custom["prompt"]=cp.prompt;
+    auto s=d["settings"].to<JsonObject>();const auto& v=userSettings.values;s["petPersonality"]=v.petPersonality;s["volume"]=v.volume;s["volumeStep"]=v.volumeStep;s["voice"]=v.voice;s["autoNext"]=v.autoNext;s["shuffle"]=v.shuffle;s["wifi"]=v.wifi;s["admin"]=v.admin;
     auto colors=s["colors"].to<JsonArray>();for(auto color:v.colors){auto row=colors.add<JsonArray>();row.add(color.hue);row.add(color.saturation);row.add(color.value);}
     JsonDocument ai;deserializeJson(ai,aiConversation.getConfigJson(false));d["ai"]=ai;
     String out;{Guard g(portalMutex);d["username"]=account;d["settingsResult"]=settingsResult;d["settingsRevision"]=settingsRevision;serializeJson(d,out);if(g.held)snapshot=out;}

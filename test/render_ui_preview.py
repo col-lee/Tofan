@@ -40,6 +40,16 @@ int main(){
     for(int i=0;i<12;++i){simulatedMillis+=33;ui.drawAIPet();}spr.save("12-pet-pause");
     ui.petSpeaking=false;ui.petMood=ui::PetMood::Listening;ui.petVoiceLevel=.8f;
     for(int i=0;i<12;++i){simulatedMillis+=33;ui.drawAIPet();}spr.save("12-pet-listening");
+    ui.petSpeaking=false;ui.petMood=ui::PetMood::Neutral;ui.petVoiceLevel=0;
+    for(int profile=0;profile<pet::personalityCount;++profile){
+        userSettings.values.petPersonality=profile;
+        for(int frame=0;frame<20;++frame){simulatedMillis+=33;ui.drawAIPet();}
+        spr.save(("pet-personality-"+std::to_string(profile)).c_str());
+    }
+    userSettings.values.petPersonality=8;userSettings.customPet.base=7;userSettings.customPet.blush=150;
+    for(int frame=0;frame<25;++frame){simulatedMillis+=33;ui.drawAIPet();}
+    spr.save("pet-custom-shaped");
+    userSettings.values.petPersonality=0;
     ui.debug();spr.save("13-devices");
     ui.settingsPage=ui::SettingsPage::Network;ui.drawSettings();spr.save("14-network");
     ui.drawPopupNoMusic();spr.save("15-connect");

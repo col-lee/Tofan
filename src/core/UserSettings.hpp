@@ -3,13 +3,15 @@
 #include <cstddef>
 #include <cstdio>
 #include <cmath>
+#include "PetPersonality.hpp"
 
 namespace preferences {
 enum ColorRole { Background, Surface, Text, Accent, Muted, Selection, ColorCount };
 struct HSV { uint16_t hue; uint8_t saturation, value; };
 struct Values {
     HSV colors[ColorCount] = {{160,3,98},{155,9,94},{205,30,22},{160,30,79},{205,17,49},{165,19,88}};
-    uint8_t volume = 50, volumeStep = 5, reserved = 0;
+    // Reuse the zero-initialized reserved byte: existing version-1 records retain their layout.
+    uint8_t volume = 50, volumeStep = 5, petPersonality = 0;
     uint8_t wifi = 0, admin = 0, voice = 0, autoNext = 1, shuffle = 0;
 };
 inline int clamp(int value, int low, int high) { return value < low ? low : value > high ? high : value; }
@@ -18,7 +20,7 @@ inline int adjustVolume(int percent, int detents, int step) {
     return clamp(percent + clamp(detents,-100,100) * clamp(step,2,5),0,100);
 }
 inline bool valid(const Values& v) {
-    if (v.volume > 100 || v.volumeStep < 2 || v.volumeStep > 5 || v.reserved != 0) return false;
+    if (v.volume > 100 || v.volumeStep < 2 || v.volumeStep > 5 || v.petPersonality >= pet::personalityCount) return false;
     if (v.wifi > 1 || v.admin > 1 || v.voice > 1 || v.autoNext > 1 || v.shuffle > 1) return false;
     for (const auto& c : v.colors) if (c.hue >= 360 || c.saturation > 100 || c.value > 100) return false;
     return true;
@@ -66,8 +68,10 @@ inline bool decode(const Record& record, Values& out) {
 class UserSettings {
 public:
     preferences::Values values;
+    pet::Custom customPet;
     bool saveFailed = false;
     void begin();
     bool save();
+    bool saveCustomPet(const pet::Custom& value);
 };
 extern UserSettings userSettings;

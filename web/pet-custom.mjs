@@ -1,0 +1,17 @@
+import {voiceSelect} from './gemini-voices.mjs';
+const escape=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+export function mountCustomPet({root,value,save,preview,profiles,notice,onPreview}){
+ const defaults={background:0x102523,face:0xd9fff1,accent:0x80e2bd,cheeks:0xe69ab8,eyeWidth:100,eyeHeight:100,blush:100,radius:14,base:0,voice:'Kore',prompt:profiles[8].prompt};
+ const initial={...defaults,...value};
+ root.innerHTML=`<form class="pet-custom" id="customPetForm"><h3>ออกแบบ Custom</h3><div class="two"><div id="customPetPreview"></div><div><label>ทรงหน้าและลูกเล่น<select name="base">${profiles.slice(0,8).map(p=>`<option value="${p.id}">${escape(p.name)}</option>`).join('')}</select></label><div class="two">${[['background','พื้นหลัง'],['face','ตาและปาก'],['accent','ลูกเล่น'],['cheeks','แก้ม']].map(([key,label])=>`<label>${label}<input name="${key}" type="color"></label>`).join('')}</div></div></div>${[['eyeWidth','ความกว้างตา',60,130],['eyeHeight','ความสูงตา',30,130],['blush','ขนาดแก้ม',0,150],['radius','ความโค้งของตา',0,24]].map(([key,label,min,max])=>`<label>${label}<output data-for="${key}"></output><input name="${key}" type="range" min="${min}" max="${max}"></label>`).join('')}<label>เสียง Custom${voiceSelect(initial.voice,escape)}</label><label>คำสั่งบุคลิก Custom<textarea name="prompt" rows="5" maxlength="511" required></textarea></label><p class="hint">คำสั่งสูงสุด 511 ไบต์ UTF-8 · <output id="customPromptBytes"></output> ไบต์</p><button class="primary" id="saveCustomPet">บันทึกแบบ Custom</button><p class="hint">บันทึกแบบนี้ไว้ในเครื่องได้แม้เปลี่ยนไปใช้บุคลิกอื่น หากต้องการใช้บทสนทนาด้วย ให้กดใช้ preset แล้วบันทึก AI conversation</p></form>`;
+ const form=root.querySelector('form');
+ for(const [key,value] of Object.entries(initial)){if(!form.elements[key])continue;form.elements[key].value=['background','face','accent','cheeks'].includes(key)?'#'+Number(value).toString(16).padStart(6,'0'):value;}
+ const read=()=>{const out={};for(const [key,value] of new FormData(form)){out[key]=['voice','prompt'].includes(key)?value:value.startsWith('#')?parseInt(value.slice(1),16):+value;}return out;};
+ const look=c=>({id:c.base,background:'#'+c.background.toString(16).padStart(6,'0'),face:'#'+c.face.toString(16).padStart(6,'0'),accent:'#'+c.accent.toString(16).padStart(6,'0'),cheeks:'#'+c.cheeks.toString(16).padStart(6,'0'),w:c.eyeWidth/100,h:c.eyeHeight/100,blush:c.blush/100,r:c.radius});
+ const redraw=()=>{const c=read(),p=look(c);root.querySelector('#customPetPreview').innerHTML=preview(p);onPreview(p);root.querySelectorAll('[data-for]').forEach(o=>o.textContent=' '+c[o.dataset.for]);root.querySelector('#customPromptBytes').textContent=new TextEncoder().encode(c.prompt).length;};
+ const checked=()=>{const c=read();if(!c.prompt.trim()||new TextEncoder().encode(c.prompt).length>511)throw Error('คำสั่ง Custom ต้องไม่ว่างและไม่เกิน 511 ไบต์ UTF-8');return c;};
+ form.oninput=redraw;form.onchange=redraw;
+ form.onsubmit=async event=>{event.preventDefault();const button=root.querySelector('#saveCustomPet');if(button.disabled)return;try{const c=checked();button.disabled=true;await save(c);notice('ส่งแบบ Custom แล้ว รอผลบันทึกจากเครื่อง');}catch(error){notice(error.message,true);}finally{button.disabled=false;}};
+ redraw();
+ return {preset:()=>{const c=checked();return {voice:c.voice,prompt:c.prompt};}};
+}
