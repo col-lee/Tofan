@@ -1,5 +1,6 @@
 // Initializes devices and background tasks, then dispatches application updates.
 #include "Application.hpp"
+#include "../core/MemoryPolicy.hpp"
 #include "../network/WebPortal.hpp"
 #include "../core/UserSettings.hpp"
 #include "../food/FoodStore.hpp"
@@ -13,6 +14,7 @@
 #include "../hardware/IOManager.hpp"
 #include "../hardware/HardwareManager.hpp"
 #include "../ai/AIConversation.hpp"
+#include "../ai/ChatHistory.hpp"
 #include "../hardware/RGBLed.hpp"
 #include "AppCoordinator.hpp"
 #include "InputController.hpp"
@@ -21,6 +23,7 @@
 static void initializeSystem() {
     Serial.begin(115200);
     Serial.println("start...");
+    memory::begin();
 
     sdSemaphore = xSemaphoreCreateMutex();
     displaySemaphore = xSemaphoreCreateMutex();
@@ -42,6 +45,7 @@ static void initializeSystem() {
     DISM.initDisplay();
     ioManager.initPins();
     file_card.initSDCard();
+    chatHistory.begin();
     vTaskDelay(pdMS_TO_TICKS(200));
 
     initAudio();
@@ -86,6 +90,7 @@ void app::begin() {
 void app::update() {
     serviceWebPortal();
     if (webFirmwareUpdating()) { delay(1); return; }
+    chatHistory.service();
     appCoordinator.update();
     inputController.update();
 }

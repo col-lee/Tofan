@@ -1,3 +1,4 @@
+#include "../core/MemoryPolicy.hpp"
 // Manages Wi-Fi, Admin Mode HTTP routes and WebSocket commands.
 #include "Network.hpp"
 #include "WebPortal.hpp"
@@ -326,7 +327,7 @@ void handleWebSocketMessage(AsyncWebSocketClient *client, void *arg, uint8_t *da
         // Deserialize exactly the received WebSocket payload length.
         String msg((char*)data, len);
 
-        JsonDocument doc;
+        JsonDocument doc(memory::jsonAllocator());
         DeserializationError error = deserializeJson(doc, msg);
         if (error) {
             Serial.println("WS JSON Error!");

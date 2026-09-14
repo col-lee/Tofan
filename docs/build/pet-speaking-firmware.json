@@ -1,0 +1,14 @@
+﻿{
+    "flashed":  false,
+    "hardwareVerified":  false,
+    "firmware":  "D:\\PlatFormIO\\ToFan\\.pio\\build\\esp32-s3-devkitc-1-n16r8v\\firmware.bin",
+    "tests":  [
+                  "test_pet_live_response.py",
+                  "test_live_audio.py",
+                  "test_live_mic_packet.py"
+              ],
+    "change":  "Keep pet speaking across streamed PCM gaps until response completes and playback drains",
+    "built":  "2026-09-14T20:49:48.7126914+07:00",
+    "bytes":  2108704,
+    "sha256":  "25AC48A4EF665B17F671079879E9A58B257568378A76A5996EF2C900ED9A044A"
+}

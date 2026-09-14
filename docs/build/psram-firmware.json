@@ -1,0 +1,17 @@
+﻿{
+    "previousStaticRamBytes":  106188,
+    "staticRamBytes":  103084,
+    "flashed":  false,
+    "sha256":  "79CC511D99FFF0ED7D704B95DB5825840D1456B8108AD033D4BBEF259A50933F",
+    "bytes":  2108608,
+    "tests":  [
+                  "test_memory_policy.py",
+                  "test_chat_history.py",
+                  "test_chat_protocol.py",
+                  "test_live_mic_packet.py",
+                  "test_live_audio.py"
+              ],
+    "hardwareVerified":  false,
+    "built":  "2026-09-14T20:40:17.5616976+07:00",
+    "firmware":  "D:\\PlatFormIO\\ToFan\\.pio\\build\\esp32-s3-devkitc-1-n16r8v\\firmware.bin"
+}

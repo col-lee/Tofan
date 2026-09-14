@@ -43,7 +43,9 @@ public:
     bool isLiveProvider() const;
     bool isLiveSessionActive() const;
     bool isLiveSessionReady() const;
+    bool isLiveResponseActive() const;
     bool isConfigured() const;
+    bool hasLiveWorker() const {return liveWorkerRunning.load();}
 
 private:
     Preferences preferences;
@@ -53,6 +55,9 @@ private:
 
     WebSocketsClient liveSocket;
     TaskHandle_t liveTaskHandle = nullptr;
+    std::atomic<bool> liveWorkerRunning{false};
+    String liveInitialHistory;
+    bool liveHistoryInitial=false;
     std::atomic<bool> liveStopRequested{false};
     std::atomic<bool> liveSocketConnected{false};
     std::atomic<bool> liveSetupComplete{false};

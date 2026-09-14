@@ -1,3 +1,4 @@
+#include "../core/MemoryPolicy.hpp"
 #include "WebPortal.hpp"
 #include "WebPolicy.hpp"
 #include "PortalAssets.hpp"
@@ -7,6 +8,8 @@
 #include "../audio/SoundManager.hpp"
 #include "../display/DisplayManager.hpp"
 #include "../ai/AIConversation.hpp"
+#include "../ai/ChatHistory.hpp"
+#include "../app/AppCoordinator.hpp"
 #include "../food/FoodStore.hpp"
 #include <esp_ota_ops.h>
 #include <esp_http_client.h>
@@ -40,7 +43,7 @@ String settingsResult;
 uint32_t settingsRevision=0;
 struct Guard { SemaphoreHandle_t m; bool held; Guard(SemaphoreHandle_t m):m(m),held(m && xSemaphoreTake(m,pdMS_TO_TICKS(1500))==pdTRUE){} ~Guard(){if(held)xSemaphoreGive(m);} };
 void reply(AsyncWebServerRequest* r,int code,const String& message,bool ok=false) {
-    JsonDocument d; d["ok"]=ok; d[ok?"message":"error"]=message; String out; serializeJson(d,out);
+    JsonDocument d(memory::jsonAllocator()); d["ok"]=ok; d[ok?"message":"error"]=message; String out; serializeJson(d,out);
     auto* response=r->beginResponse(code,"application/json",out); response->addHeader("Cache-Control","no-store"); r->send(response);
 }
 String param(AsyncWebServerRequest* r,const char* name,bool post=true) { return r->hasParam(name,post)?r->getParam(name,post)->value():String(); }
@@ -53,7 +56,7 @@ String hashPassword(const String& pass,const String& s) {
 }
 bool saveAccount(const String& user,const String& newSalt,const String& newHash) {
     // One NVS value prevents a power interruption from mixing old and new fields.
-    JsonDocument d;d["user"]=user;d["salt"]=newSalt;d["hash"]=newHash;String record;serializeJson(d,record);
+    JsonDocument d(memory::jsonAllocator());d["user"]=user;d["salt"]=newSalt;d["hash"]=newHash;String record;serializeJson(d,record);
     Preferences p;if(!p.begin("portal",false))return false;bool ok=p.putString("account",record)==record.length();p.end();return ok;
 }
 bool authorized(AsyncWebServerRequest* r,bool mutation=false,bool send=true) {
@@ -334,7 +337,7 @@ void urlUpdate(void* arg) {
 void registerWebPortal(AsyncWebServer& server) {
     portalMutex=xSemaphoreCreateMutex();commands=xQueueCreate(3,sizeof(Command));
     if(!portalMutex||!commands){Serial.println("Portal initialization failed");return;}
-    Preferences p;p.begin("portal",true);String record=p.getString("account","");p.end();JsonDocument saved;
+    Preferences p;p.begin("portal",true);String record=p.getString("account","");p.end();JsonDocument saved(memory::jsonAllocator());
     if(!deserializeJson(saved,record)){account=saved["user"]|"";salt=saved["salt"]|"";passwordHash=saved["hash"]|"";}
     if(account.isEmpty()) {
         // Preserve access for an existing installation while migrating away from plaintext.
@@ -364,7 +367,7 @@ void registerWebPortal(AsyncWebServer& server) {
             bool saved=saveAccount(user,newSalt,newHash);
             if(!saved){reply(r,500,"Cannot save account");return;}account=user;salt=newSalt;passwordHash=newHash;
         }else if(user!=account || hashPassword(pass,salt)!=passwordHash){reply(r,401,"Incorrect username or password");return;}
-        session=randomHex();sessionAt=millis();JsonDocument d;d["token"]=session;String out;serializeJson(d,out);r->send(200,"application/json",out);
+        session=randomHex();sessionAt=millis();JsonDocument d(memory::jsonAllocator());d["token"]=session;String out;serializeJson(d,out);r->send(200,"application/json",out);
     });
     server.on("/api/logout",AsyncWebRequestMethod::HTTP_POST,[](AsyncWebServerRequest* r){if(!authorized(r,true))return;{Guard g(portalMutex);session="";}reply(r,200,"Signed out",true);});
     server.on("/api/account",AsyncWebRequestMethod::HTTP_POST,[](AsyncWebServerRequest* r){if(!authorized(r,true))return;
@@ -381,22 +384,34 @@ void registerWebPortal(AsyncWebServer& server) {
     server.on("/api/settings",AsyncWebRequestMethod::HTTP_POST,[](AsyncWebServerRequest* r){if(!authorized(r,true))return;enqueue(r,Command::Settings,param(r,"values"));});
     server.on("/api/wifi",AsyncWebRequestMethod::HTTP_POST,[](AsyncWebServerRequest* r){if(!authorized(r,true))return;
         String ssid=param(r,"ssid"),pass=param(r,"password");if(ssid.isEmpty()||ssid.length()>32||pass.length()>63||(pass.length()&&pass.length()<8)){reply(r,400,"SSID 1–32 bytes; password empty or 8–63 bytes");return;}
-        JsonDocument d;d["ssid"]=ssid;d["password"]=pass;String out;serializeJson(d,out);enqueue(r,Command::Wifi,out);
+        JsonDocument d(memory::jsonAllocator());d["ssid"]=ssid;d["password"]=pass;String out;serializeJson(d,out);enqueue(r,Command::Wifi,out);
     });
     server.on("/api/ai",AsyncWebRequestMethod::HTTP_POST,[](AsyncWebServerRequest* r){if(authorized(r,true))enqueue(r,Command::AI,param(r,"values"));});
+    server.on("/api/history",AsyncWebRequestMethod::HTTP_GET,[](AsyncWebServerRequest* r){
+        if(!authorized(r))return;String before=param(r,"before",false);
+        for(size_t i=0;i<before.length();++i)if(before[i]<'0'||before[i]>'9'){reply(r,400,"Invalid history cursor");return;}
+        if(before.length()>5){reply(r,400,"Invalid history cursor");return;}
+        auto* response=r->beginResponse(200,"application/json",chatHistory.page(before.toInt(),param(r,"summary",false)!="1"));response->addHeader("Cache-Control","no-store");r->send(response);
+    });
+    server.on("/api/history/reset",AsyncWebRequestMethod::HTTP_POST,[](AsyncWebServerRequest* r){
+        if(!authorized(r,true))return;if(updating.load()||app::runtime.aiPetProcessing){reply(r,409,"Device busy; try again after the current request");return;}
+        if(param(r,"confirm")!="reset"){reply(r,400,"Reset confirmation required");return;}
+        if(!chatHistory.requestReset()){reply(r,409,"History reset already in progress");return;}
+        reply(r,202,"History reset requested",true);
+    });
     server.on("/api/foods",AsyncWebRequestMethod::HTTP_GET,[](AsyncWebServerRequest* r){
         if(!authorized(r))return;auto* response=r->beginResponse(200,"application/json",foodStore.snapshot());response->addHeader("Cache-Control","no-store");r->send(response);
     });
     server.on("/api/foods",AsyncWebRequestMethod::HTTP_POST,[](AsyncWebServerRequest* r){
         if(!authorized(r,true))return;if(updating.load()){reply(r,409,"Firmware update in progress");return;}
-        String body=param(r,"values");JsonDocument d;
+        String body=param(r,"values");JsonDocument d(memory::jsonAllocator());
         if(body.length()>512||deserializeJson(d,body)||!d.is<JsonObject>()){reply(r,400,"Invalid food request");return;}
         String error=foodStore.change(d);if(error.length()){reply(r,400,error);return;}
         r->send(200,"application/json",foodStore.snapshot());
     });
     server.on("/api/files",AsyncWebRequestMethod::HTTP_GET,[](AsyncWebServerRequest* r){if(!authorized(r))return;String dir=param(r,"dir",false);
         if(!portal::directory(dir.c_str())){reply(r,400,"Invalid directory");return;}
-        JsonDocument d;auto files=d["files"].to<JsonArray>();{Guard g(sdSemaphore);if(!g.held||!isConnectSDcard){reply(r,503,"SD unavailable");return;}
+        JsonDocument d(memory::jsonAllocator());auto files=d["files"].to<JsonArray>();{Guard g(sdSemaphore);if(!g.held||!isConnectSDcard){reply(r,503,"SD unavailable");return;}
         File root=SD.open("/main/"+dir);if(!root){reply(r,404,"Directory not found");return;}File file=root.openNextFile();int count=0;
         while(file){if(!file.isDirectory()){auto item=files.add<JsonObject>();item["name"]=file.name();item["size"]=file.size();if(++count>=250){d["truncated"]=true;break;}}file.close();file=root.openNextFile();}file.close();root.close();}
         String out;serializeJson(d,out);r->send(200,"application/json",out);
@@ -433,7 +448,7 @@ void registerWebPortal(AsyncWebServer& server) {
         reply(r,202,"Audio download started",true);
     });
     server.on("/api/ota/file",AsyncWebRequestMethod::HTTP_POST,uploadComplete,[](AsyncWebServerRequest* r,String name,size_t i,uint8_t* data,size_t len,bool last){uploadChunk(r,name,i,data,len,last,true);});
-    server.on("/api/ota",AsyncWebRequestMethod::HTTP_GET,[](AsyncWebServerRequest* r){if(!authorized(r))return;JsonDocument d;{Guard g(portalMutex);d["state"]=otaState;d["error"]=otaError;d["done"]=otaDone;d["total"]=otaTotal;}String out;serializeJson(d,out);r->send(200,"application/json",out);});
+    server.on("/api/ota",AsyncWebRequestMethod::HTTP_GET,[](AsyncWebServerRequest* r){if(!authorized(r))return;JsonDocument d(memory::jsonAllocator());{Guard g(portalMutex);d["state"]=otaState;d["error"]=otaError;d["done"]=otaDone;d["total"]=otaTotal;}String out;serializeJson(d,out);r->send(200,"application/json",out);});
     server.on("/api/ota/url",AsyncWebRequestMethod::HTTP_POST,[](AsyncWebServerRequest* r){if(!authorized(r,true))return;String url=param(r,"url");
         if(url.length()>1023||url.indexOf('@')>=0||url.indexOf('\r')>=0||url.indexOf('\n')>=0||(!url.startsWith("https://")&&!url.startsWith("http://"))){reply(r,400,"Use a direct HTTP(S) firmware URL without credentials");return;}
         if(rebootAt.load()||WiFi.status()!=WL_CONNECTED||deviceBusy()){reply(r,409,"Connect WiFi and stop playback/recording first");return;}
@@ -446,12 +461,17 @@ void registerWebPortal(AsyncWebServer& server) {
 
 void serviceWebPortal() {
     if(!commands||!portalMutex)return;
+    if(chatHistory.resetting()){
+        if(aiConversation.hasLiveWorker()){
+            if(aiConversation.isLiveSessionActive())appCoordinator.stopAiPetListening();
+        }else chatHistory.reset();
+    }
     static bool wasUpdating=false;bool active=webFirmwareUpdating();
     if(active!=wasUpdating){setVoiceAssistantEnabled(active?false:userSettings.values.voice);wasUpdating=active;}
     uint32_t restart=rebootAt.load();if(restart && static_cast<int32_t>(millis()-restart)>=0)ESP.restart();
     Command c{};
     if(!updating && xQueueReceive(commands,&c,0)==pdTRUE) {
-        JsonDocument d;String result="Settings saved";
+        JsonDocument d(memory::jsonAllocator());String result="Settings saved";
         if(deserializeJson(d,c.body))result="Invalid settings JSON";
         else if(c.kind==Command::Settings && !d["customPet"].isNull()) {
             auto value=userSettings.customPet;JsonVariant json=d["customPet"];bool valid=d.size()==1&&json.is<JsonObject>();
@@ -485,7 +505,7 @@ void serviceWebPortal() {
         {Guard g(portalMutex);if(g.held){settingsResult=result;++settingsRevision;}}
     }
     static uint32_t last=0;if(millis()-last<1000)return;last=millis();
-    JsonDocument d;d["device"]=String(static_cast<uint32_t>(ESP.getEfuseMac()),HEX);d["uptime"]=millis()/1000;d["heap"]=ESP.getFreeHeap();d["psram"]=ESP.getFreePsram();d["firmware"]=__DATE__ " " __TIME__;d["slotSize"]=slotSize();d["width"]=tft.width();d["height"]=tft.height();
+    JsonDocument d(memory::jsonAllocator());d["device"]=String(static_cast<uint32_t>(ESP.getEfuseMac()),HEX);d["uptime"]=millis()/1000;d["heap"]=ESP.getFreeHeap();d["psram"]=ESP.getFreePsram();d["heapMin"]=ESP.getMinFreeHeap();d["heapLargest"]=ESP.getMaxAllocHeap();d["tlsPsram"]=memory::tlsUsesPsram();d["firmware"]=__DATE__ " " __TIME__;d["slotSize"]=slotSize();d["width"]=tft.width();d["height"]=tft.height();
     d["connected"]=WiFi.status()==WL_CONNECTED;d["ssid"]=WiFi.SSID();d["ip"]=WiFi.localIP().toString();d["apIP"]=WiFi.softAPIP().toString();d["rssi"]=WiFi.RSSI();d["networkBusy"]=networkSettingsBusy();
     d["sd"]=isConnectSDcard;{Guard g(sdSemaphore);if(g.held && isConnectSDcard){d["storageTotal"]=SD.totalBytes();d["storageUsed"]=SD.usedBytes();}}
     d["playing"]=isPlayingAudio;d["title"]=currentSongTitle;d["current"]=currentAudioTime;d["duration"]=totalAudioDuration;d["recording"]=app::runtime.isRecording;d["busy"]=transfer.load();
@@ -495,7 +515,7 @@ void serviceWebPortal() {
     custom["eyeWidth"]=cp.eyeWidth;custom["eyeHeight"]=cp.eyeHeight;custom["blush"]=cp.blush;custom["radius"]=cp.radius;custom["base"]=cp.base;custom["voice"]=cp.voice;custom["prompt"]=cp.prompt;
     auto s=d["settings"].to<JsonObject>();const auto& v=userSettings.values;s["petPersonality"]=v.petPersonality;s["volume"]=v.volume;s["volumeStep"]=v.volumeStep;s["voice"]=v.voice;s["autoNext"]=v.autoNext;s["shuffle"]=v.shuffle;s["wifi"]=v.wifi;s["admin"]=v.admin;
     auto colors=s["colors"].to<JsonArray>();for(auto color:v.colors){auto row=colors.add<JsonArray>();row.add(color.hue);row.add(color.saturation);row.add(color.value);}
-    JsonDocument ai;deserializeJson(ai,aiConversation.getConfigJson(false));d["ai"]=ai;
+    JsonDocument ai(memory::jsonAllocator());deserializeJson(ai,aiConversation.getConfigJson(false));d["ai"]=ai;
     String out;{Guard g(portalMutex);d["username"]=account;d["settingsResult"]=settingsResult;d["settingsRevision"]=settingsRevision;serializeJson(d,out);if(g.held)snapshot=out;}
 }
 

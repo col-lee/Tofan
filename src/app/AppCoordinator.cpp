@@ -111,7 +111,7 @@ void AppCoordinator::updateAiPetBehavior() {
         micNoiseFloor = micNoiseFloor * 0.995f + micEnvelope * 0.005f;
     }
     if (micNoiseFloor < 0.006f) micNoiseFloor = 0.006f;
-    DISM.petSpeaking = app::runtime.aiPetListening && aiConversation.isLiveProvider() && livePcmHasBufferedAudio();
+    DISM.petSpeaking = app::runtime.aiPetListening && aiConversation.isLiveProvider() && aiConversation.isLiveResponseActive();
     DISM.petSpeechLevel = getLiveSpeechLevel() * 10.0f;
     if (DISM.petSpeechLevel > 1.0f) DISM.petSpeechLevel = 1.0f;
     DISM.setPetVoiceLevel(DISM.petSpeaking ? 0.0f : micEnvelope * 6.0f);
@@ -290,7 +290,7 @@ void AppCoordinator::updateAiPetListening() {
     if (aiConversation.isLiveProvider()) {
         // The Gemini task owns the WebSocket/microphone queue. Keep the pet page
         // responsive here; reconnection is handled inside AIConversation.
-        if (aiConversation.isLiveSessionReady() && !livePcmHasBufferedAudio() && !DISM.isPetMoodHeld()) {
+        if (aiConversation.isLiveSessionReady() && !aiConversation.isLiveResponseActive() && !DISM.isPetMoodHeld()) {
             DISM.setPetMood(ui::PetMood::Listening, "I'm listening~", 500);
         }
         return;

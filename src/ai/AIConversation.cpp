@@ -1,6 +1,8 @@
+#include "../core/MemoryPolicy.hpp"
 // AI configuration, legacy HTTP WAV pipeline and Gemini Live voice-only transport.
 #include "AIConversation.hpp"
 #include "GoogleTrustRoots.hpp"
+#include "ChatHistory.hpp"
 #include "../audio/SoundManager.hpp"
 
 #include <ArduinoJson.h>
@@ -149,7 +151,7 @@ bool AIConversation::saveConfig(const JsonDocument& document) {
 }
 
 String AIConversation::getConfigJson(bool includeSecrets) const {
-    JsonDocument document;
+    JsonDocument document(memory::jsonAllocator());
     document["enabled"] = config.enabled;
     document["allowInsecureTLS"] = config.allowInsecureTLS;
     document["liveBargeIn"] = config.liveBargeIn;
@@ -179,7 +181,7 @@ String AIConversation::getConfigJson(bool includeSecrets) const {
 }
 
 String AIConversation::getStatusJson() const {
-    JsonDocument document;
+    JsonDocument document(memory::jsonAllocator());
     document["enabled"] = config.enabled;
     document["configured"] = isConfigured();
     document["provider"] = config.provider;
@@ -212,6 +214,13 @@ bool AIConversation::isLiveSessionActive() const {
 
 bool AIConversation::isLiveSessionReady() const {
     return liveSocketConnected.load() && liveSetupComplete.load();
+}
+
+bool AIConversation::isLiveResponseActive() const {
+    // A streamed reply remains active through gaps between PCM packets, and
+    // after turnComplete until the speaker has finished the queued samples.
+    return isLiveSessionReady() &&
+        (liveModelTurnActive.load() || livePcmHasBufferedAudio());
 }
 
 void AIConversation::setError(const String& message) {
@@ -248,7 +257,7 @@ void AIConversation::handleConfigRequest(AsyncWebServerRequest* request) {
         return;
     }
 
-    JsonDocument document;
+    JsonDocument document(memory::jsonAllocator());
     DeserializationError error = deserializeJson(document, *body);
     delete body;
     request->_tempObject = nullptr;
@@ -351,7 +360,7 @@ bool AIConversation::submitAudioFile(const char* path, String& responseBody) {
 }
 
 bool AIConversation::extractAudioUrl(const String& responseBody, String& audioUrl) const {
-    JsonDocument document;
+    JsonDocument document(memory::jsonAllocator());
     if (deserializeJson(document, responseBody)) return false;
     const char* url = document["audioUrl"] | "";
     if (strlen(url) == 0) return false;
@@ -360,6 +369,7 @@ bool AIConversation::extractAudioUrl(const String& responseBody, String& audioUr
 }
 
 bool AIConversation::startLiveSession() {
+    if(chatHistory.resetting()){setError("Chat history reset in progress");return false;}
     if (!isLiveProvider()) return false;
     if (!isConfigured()) { setError("Gemini Live requires an API key and model"); return false; }
     if (WiFi.status() != WL_CONNECTED) { setError("WiFi is not connected"); return false; }
@@ -383,7 +393,9 @@ bool AIConversation::startLiveSession() {
     state = "live_connecting";
     lastError = "";
 
+    liveWorkerRunning=true;
     if (xTaskCreatePinnedToCore(liveTaskEntry, "GeminiLive", 18 * 1024, this, 3, &liveTaskHandle, 0) != pdPASS) {
+        liveWorkerRunning=false;
         liveTaskHandle = nullptr;
         stopLivePcmOutput();
         setError("Unable to create Gemini Live task");
@@ -409,7 +421,7 @@ void AIConversation::liveSocketEvent(WStype_t type, uint8_t* payload, size_t len
 }
 
 bool AIConversation::sendLiveSetup() {
-    JsonDocument document;
+    JsonDocument document(memory::jsonAllocator());
     JsonObject setup = document["setup"].to<JsonObject>();
     String modelName = config.model;
     modelName.trim();
@@ -428,6 +440,12 @@ bool AIConversation::sendLiveSetup() {
     JsonArray parts = setup["systemInstruction"]["parts"].to<JsonArray>();
     JsonObject instructionPart = parts.add<JsonObject>();
     instructionPart["text"] = config.systemInstruction;
+    setup["inputAudioTranscription"].to<JsonObject>();
+    setup["outputAudioTranscription"].to<JsonObject>();
+    // Replay role-labelled conversation only into new sessions, never resumed ones.
+    liveInitialHistory=liveSessionHandle.length()?String():chatHistory.context();
+    liveHistoryInitial=String(config.model).indexOf("3.1")>=0;
+    if(liveInitialHistory.length()>2&&liveHistoryInitial)setup["historyConfig"]["initialHistoryInClientContent"]=true;
 
     // Keep server-side VAD enabled, but make the interruption policy match the
     // AI Conversation setting. Without this, Gemini defaults to
@@ -574,7 +592,7 @@ void AIConversation::releaseLiveTxScratchBuffer() {
 void AIConversation::handleLiveServerMessage(uint8_t* payload, size_t length) {
     // Mutable input lets ArduinoJson reference strings in the WebSocket payload rather than
     // duplicating large base64 audio strings into a second heap allocation.
-    JsonDocument document;
+    JsonDocument document(memory::jsonAllocator());
     DeserializationError error = deserializeJson(document, reinterpret_cast<char*>(payload), length);
     if (error) {
         Serial.printf("[GEMINI] JSON parse error: %s (%u bytes)\n", error.c_str(), static_cast<unsigned>(length));
@@ -598,6 +616,14 @@ void AIConversation::handleLiveServerMessage(uint8_t* payload, size_t length) {
     }
 
     if (!document["setupComplete"].isNull()) {
+        if(liveInitialHistory.length()>2){
+            JsonDocument history(memory::jsonAllocator());history["clientContent"]["turns"]=serialized(liveInitialHistory);
+            history["clientContent"]["turnComplete"]=liveHistoryInitial;
+            String payload;serializeJson(history,payload);
+            if(!liveSocket.sendTXT(payload)){setError("Unable to restore chat memory");liveSocket.disconnect();return;}
+            Serial.println("[GEMINI] Recent conversation memory restored");
+        }
+        liveInitialHistory=String();
         liveSetupComplete.store(true);
         liveSetupSentAtMs = 0;
         liveConsecutiveFailures = 0;
@@ -611,6 +637,7 @@ void AIConversation::handleLiveServerMessage(uint8_t* payload, size_t length) {
         liveSpeakerWasBusy = false;
         lastError = "";
         Serial.println("[GEMINI] Setup complete");
+        Serial.printf("[MEMORY] Live ready | internal=%u PSRAM=%u largest=%u minimum=%u stackFree=%u TLS=%s\n",ESP.getFreeHeap(),ESP.getFreePsram(),ESP.getMaxAllocHeap(),ESP.getMinFreeHeap(),static_cast<unsigned>(uxTaskGetStackHighWaterMark(nullptr)),memory::tlsUsesPsram()?"PSRAM preferred":"SDK default");
         if (!startLiveMicrophoneStream()) {
             setError("Microphone stream could not start");
             liveStopRequested.store(true);
@@ -652,7 +679,10 @@ void AIConversation::handleLiveServerMessage(uint8_t* payload, size_t length) {
         return;
     }
 
+    chatHistory.transcript(false,serverContent["inputTranscription"]["text"]|"");
+    chatHistory.transcript(true,serverContent["outputTranscription"]["text"]|"");
     if (serverContent["interrupted"] | false) {
+        chatHistory.finish(true);
         clearLivePcmOutput();
         liveModelTurnActive.store(false);
         liveGenerationComplete.store(false);
@@ -706,6 +736,7 @@ void AIConversation::handleLiveServerMessage(uint8_t* payload, size_t length) {
     }
 
     if (serverContent["turnComplete"] | false) {
+        chatHistory.finish();
         liveModelTurnActive.store(false);
         liveGenerationComplete.store(false);
         // Keep the microphone gated briefly after the final queued samples drain
@@ -770,6 +801,7 @@ void AIConversation::handleLiveSocketEvent(WStype_t type, uint8_t* payload, size
             resetLiveWsFragment();
             break;
         case WStype_DISCONNECTED: {
+            chatHistory.finish(true);
             const bool wasReady = liveSetupComplete.load();
             const bool plannedRotation = liveGoAwaySeen;
             liveGoAwaySeen = false;
@@ -1011,6 +1043,7 @@ void AIConversation::runLiveSession() {
     lastError = "";
     liveTaskHandle = nullptr;
     liveStopRequested.store(false);
+    liveWorkerRunning=false;
     Serial.printf("[GEMINI] Live session closed | TX=%u RX=%u dropped=%u\n",
                   static_cast<unsigned>(liveTxAudioChunks.load()),
                   static_cast<unsigned>(liveRxAudioChunks.load()),

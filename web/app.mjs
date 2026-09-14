@@ -1,3 +1,4 @@
+import {mountHistory} from './chat-history.mjs';
 import {mountPersonalities} from './pet-personalities.mjs';
 import {voiceSelect} from './gemini-voices.mjs';
 import {mountFoods} from './foods.mjs';
@@ -53,7 +54,7 @@ function settings(){const s=status.settings||{};$('#content').innerHTML=`<div cl
  $('#colorRole').onchange=show;$('#brightness').oninput=e=>{colors[+$('#colorRole').value][2]=+e.target.value;show();};$('#colorHex').oninput=e=>{const a=e.target.value.match(/\w\w/g).map(x=>parseInt(x,16)/255),max=Math.max(...a),min=Math.min(...a),d=max-min;let h=0;if(d)h=max===a[0]?((a[1]-a[2])/d+6)%6:max===a[1]?(a[2]-a[0])/d+2:(a[0]-a[1])/d+4;colors[+$('#colorRole').value]=[Math.round(h*60)%360,Math.round(max?d/max*100:0),Math.round(max*100)];show();};$('#saveColors').onclick=attempt(()=>saveSettings({colors}));show();}
 function ai(){
  const a=status.ai||{},live=(a.provider||'gemini-live')==='gemini-live';
- $('#content').innerHTML=`<div id="petAppearance"></div><form id="aiForm" class="panel"><h2>บริการสนทนา</h2>
+ $('#content').innerHTML=`<div id="chatHistoryPanel"></div><div id="petAppearance"></div><form id="aiForm" class="panel"><h2>บริการสนทนา</h2>
  ${toggle('enabled','เปิด AI conversation',a.enabled)}
  <label>Provider<select name="provider" id="aiProvider"><option value="gemini-live" ${live?'selected':''}>Gemini Live (ไมค์ → เสียงตอบกลับ)</option><option value="backend" ${!live?'selected':''}>HTTP backend เดิม</option></select></label>
  <label>API key<input name="apiKey" type="password" maxlength="159" placeholder="${a.apiKeySet?'ตั้งค่าแล้ว · เว้นว่างเพื่อคงค่าเดิม':'ใส่ API key'}"></label>
@@ -70,6 +71,7 @@ function ai(){
  ${toggle('allowInsecureTLS','อนุญาต TLS ที่ไม่ตรวจใบรับรอง (ใช้เฉพาะระบบทดสอบ)',a.allowInsecureTLS)}
  <p class="hint" id="aiState">สถานะ: ${escape(a.state||'idle')}${a.lastError?` · ${escape(a.lastError)}`:''}</p>
  <button class="primary">บันทึก</button></form>`;
+ mountHistory({root:$('#chatHistoryPanel'),api,ask,notice});
  const switchMode=()=>{const isLive=$('#aiProvider').value==='gemini-live';$('#geminiLiveFields').hidden=!isLive;$('#legacyAiFields').hidden=isLive;};
  $('#aiProvider').onchange=switchMode;switchMode();
  mountPersonalities({root:$('#petAppearance'),current:status.settings?.petPersonality||0,custom:status.customPet,save:id=>saveSettings({petPersonality:id}),saveCustom:customPet=>saveSettings({customPet}),notice,apply:p=>{
