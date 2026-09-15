@@ -24,3 +24,6 @@ public:
 };
 
 extern FileManager file_card;
+
+// Actual SD SPI clock selected during mount (target/fallback/safe).
+uint32_t getSdSpiFrequencyHz();

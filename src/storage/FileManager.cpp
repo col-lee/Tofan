@@ -4,6 +4,7 @@
 #include <ArduinoJson.h>
 
 SPIClass vspi(FSPI);
+static uint32_t activeSdSpiHz = 0;
 bool isConnectSDcard = false;
 bool isFileManager_install;
 FileManager file_card;
@@ -18,14 +19,38 @@ FileManager::~FileManager()
 
 }
 
+uint32_t getSdSpiFrequencyHz() {
+    return activeSdSpiHz;
+}
+
 void FileManager::initSDCard()
 {
     pinMode(SD_CS, OUTPUT);
     digitalWrite(SD_CS, HIGH);
     vspi.begin(SD_SCK, SD_MISO, SD_MOSI, SD_CS);
-    if (SD.begin(SD_CS, vspi, 4000000)) {
+
+    // 4 MHz was the previous fixed clock. It is safe but can become the
+    // bottleneck for WAV/FLAC or whenever uploads/history/media contend for SD.
+    // Prefer 20 MHz and fall back progressively for marginal wiring/cards.
+    const uint32_t frequencies[] = { SD_SPI_TARGET_HZ, SD_SPI_FALLBACK_HZ, SD_SPI_SAFE_HZ };
+    bool mounted = false;
+    activeSdSpiHz = 0;
+    for (uint32_t frequency : frequencies) {
+        SD.end();
+        delay(10);
+        if (SD.begin(SD_CS, vspi, frequency)) {
+            activeSdSpiHz = frequency;
+            mounted = true;
+            break;
+        }
+        Serial.printf("[SD] Mount failed at %lu MHz; trying slower clock\n",
+                      static_cast<unsigned long>(frequency / 1000000UL));
+    }
+
+    if (mounted) {
         isConnectSDcard = true;
-        Serial.println("SD mount card.");
+        Serial.printf("SD mount card at %lu MHz.\n",
+                      static_cast<unsigned long>(activeSdSpiHz / 1000000UL));
         Serial.print("Card size: ");
         Serial.println(SD.cardSize() / (1024 * 1024));
 
@@ -56,6 +81,7 @@ void FileManager::initSDCard()
     }
     else
     {
+        activeSdSpiHz = 0;
         isConnectSDcard = false;
         isFileManager_install = false;
         Serial.println("Please attach SDCard.");

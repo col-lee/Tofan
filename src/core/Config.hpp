@@ -40,6 +40,13 @@
 #define SD_SCK          12
 #define SD_CS           14
 
+// SD runs much more reliably for continuous audio when it is not limited to
+// the old 4 MHz SPI clock. Start at 20 MHz, but keep conservative fallbacks
+// for long perfboard wires/cards that cannot sustain the faster clock.
+#define SD_SPI_TARGET_HZ   20000000U
+#define SD_SPI_FALLBACK_HZ 10000000U
+#define SD_SPI_SAFE_HZ      4000000U
+
 #define IP5306_I2C_ADDRESS 0x75
 #define IP5306_I2C_SDA     -1
 #define IP5306_I2C_SCL     -1

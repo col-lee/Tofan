@@ -86,3 +86,6 @@ void audio_showstreamtitle(const char *info);
 
 uint32_t getMusicSdWaits();
 uint32_t getMusicMaxServiceGapMs();
+uint32_t getMusicInputBufferBytes();
+uint32_t getMusicMinInputBufferBytes();
+uint32_t getMusicLowBufferEvents();

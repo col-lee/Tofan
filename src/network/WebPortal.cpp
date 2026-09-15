@@ -7,6 +7,7 @@
 #include "../core/UserSettings.hpp"
 #include "../core/GlobalState.hpp"
 #include "../audio/SoundManager.hpp"
+#include "../storage/FileManager.hpp"
 #include "../display/DisplayManager.hpp"
 #include "../ai/AIConversation.hpp"
 #include "../ai/ChatHistory.hpp"
@@ -519,7 +520,12 @@ void serviceWebPortal() {
         Guard g(sdSemaphore);if(g.held){storageTotal=SD.totalBytes();storageUsed=SD.usedBytes();storageChecked=millis();}
     }
     d["sd"]=isConnectSDcard;if(storageChecked){d["storageTotal"]=storageTotal;d["storageUsed"]=storageUsed;}d["storageCached"]=true;d["storageKnown"]=storageChecked!=0;
-    d["musicSdWaits"]=getMusicSdWaits();d["musicMaxServiceGapMs"]=getMusicMaxServiceGapMs();
+    d["sdSpiHz"]=getSdSpiFrequencyHz();
+    d["musicSdWaits"]=getMusicSdWaits();
+    d["musicMaxServiceGapMs"]=getMusicMaxServiceGapMs();
+    d["musicInputBufferBytes"]=getMusicInputBufferBytes();
+    d["musicMinInputBufferBytes"]=getMusicMinInputBufferBytes();
+    d["musicLowBufferEvents"]=getMusicLowBufferEvents();
     d["playing"]=isPlayingAudio;d["title"]=getCurrentSongTitle();d["current"]=currentAudioTime;d["duration"]=totalAudioDuration;d["recording"]=app::runtime.isRecording;d["busy"]=transfer.load();
     {Guard g(portalMutex);if(g.held){d["audioImportState"]=audioImportState;d["audioImportError"]=audioImportError;d["audioImportDone"]=audioImportDone;d["audioImportTotal"]=audioImportTotal;}}
     auto custom=d["customPet"].to<JsonObject>();const auto& cp=userSettings.customPet;

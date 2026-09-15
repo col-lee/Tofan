@@ -14,13 +14,56 @@
 #include "ToFan-project-1_inferencing.h"
 
 Audio audio;
-static std::atomic<uint32_t> musicSdWaits{0},musicMaxServiceGap{0};
-static uint32_t musicLastService=0;
+static std::atomic<uint32_t> musicSdWaits{0}, musicMaxServiceGap{0};
+static std::atomic<uint32_t> musicInputBufferBytes{0}, musicMinInputBufferBytes{0}, musicLowBufferEvents{0};
+static uint32_t musicLastService = 0;
+static bool musicBufferPrimed = false;
+static constexpr uint32_t MUSIC_REFILL_LOW_WATER_BYTES = 96 * 1024;
+static constexpr uint32_t MUSIC_CRITICAL_BUFFER_BYTES = 32 * 1024;
+
 uint32_t getMusicSdWaits(){return musicSdWaits.load();}
 uint32_t getMusicMaxServiceGapMs(){return musicMaxServiceGap.load();}
+uint32_t getMusicInputBufferBytes(){return musicInputBufferBytes.load();}
+uint32_t getMusicMinInputBufferBytes(){return musicMinInputBufferBytes.load();}
+uint32_t getMusicLowBufferEvents(){return musicLowBufferEvents.load();}
+
+static void observeMusicBuffer() {
+    const uint32_t filled = audio.inBufferFilled();
+    musicInputBufferBytes.store(filled);
+    if (filled >= MUSIC_REFILL_LOW_WATER_BYTES) musicBufferPrimed = true;
+    if (!musicBufferPrimed) return;
+
+    uint32_t minimum = musicMinInputBufferBytes.load();
+    while ((minimum == 0 || filled < minimum) &&
+           !musicMinInputBufferBytes.compare_exchange_weak(minimum, filled)) {}
+
+    static bool belowCritical = false;
+    if (filled < MUSIC_CRITICAL_BUFFER_BYTES) {
+        if (!belowCritical) {
+            const uint32_t event = musicLowBufferEvents.fetch_add(1) + 1;
+            Serial.printf("[AUDIO] Music buffer low #%u | filled=%u KiB | sdWaits=%u | serviceGapMax=%u ms | SD=%lu MHz\n",
+                          static_cast<unsigned>(event),
+                          static_cast<unsigned>(filled / 1024),
+                          static_cast<unsigned>(musicSdWaits.load()),
+                          static_cast<unsigned>(musicMaxServiceGap.load()),
+                          static_cast<unsigned long>(getSdSpiFrequencyHz() / 1000000UL));
+        }
+        belowCritical = true;
+    } else if (filled >= MUSIC_REFILL_LOW_WATER_BYTES) {
+        belowCritical = false;
+    }
+}
+
 static void serviceMusic(){
-    uint32_t now=millis();if(musicLastService){uint32_t gap=now-musicLastService;if(gap>musicMaxServiceGap.load())musicMaxServiceGap=gap;}musicLastService=now;
+    const uint32_t now=millis();
+    if(musicLastService){
+        const uint32_t gap=now-musicLastService;
+        uint32_t maximum=musicMaxServiceGap.load();
+        while(gap>maximum && !musicMaxServiceGap.compare_exchange_weak(maximum,gap)){}
+    }
+    musicLastService=now;
     audio.loop();
+    observeMusicBuffer();
 }
 static VoiceEnvelope microphoneEnvelope, liveSpeechEnvelope;
 float getMicrophoneVoiceLevel() { return microphoneEnvelope.level(millis()); }
@@ -596,8 +639,13 @@ static bool microphone_inference_start(uint32_t n_samples)
                   psramFound() ? "yes" : "no");
 
     record_status = true;
-    const BaseType_t taskCreated = xTaskCreate(capture_samples, "CaptureSamples", 4096,
-                                                nullptr, 10, &microphoneTask);
+    // Keep microphone DMA/copy work off Core 0, which owns SD music service,
+    // Gemini transport and speaker timing. The old unpinned priority-10 task
+    // could preempt local playback every microphone frame even when no voice
+    // command was being recognized. Core 1 has enough headroom for this short
+    // ~32 ms cadence capture job; priority 5 stays above display/UI work.
+    const BaseType_t taskCreated = xTaskCreatePinnedToCore(
+        capture_samples, "CaptureSamples", 4096, nullptr, 5, &microphoneTask, 1);
     if (taskCreated != pdPASS) {
         releaseLiveMicStorage();
         releaseRecorderStorage();
@@ -936,7 +984,13 @@ void handleAudio(void *parameter) {
         switch (cmd.audio_state) {
           case AUDIO_COMMAND::AUDIO_STATE::PLAY: {
             bool connected = false;
-            musicLastService=0;musicSdWaits=0;musicMaxServiceGap=0;
+            musicLastService=0;
+            musicSdWaits.store(0);
+            musicMaxServiceGap.store(0);
+            musicInputBufferBytes.store(0);
+            musicMinInputBufferBytes.store(0);
+            musicLowBufferEvents.store(0);
+            musicBufferPrimed=false;
             if(requestedPath != "" && requestedPath != "null") {
               currentFilePath = requestedPath;
               currentAudioProgress = 0;
@@ -1025,10 +1079,23 @@ void handleAudio(void *parameter) {
     if(currentState!=STATE_PLAYING)musicLastService=0;
     if (isConnectSDcard && !isOnlineAudio) {
       if (currentState == STATE_PLAYING) {
-        if(xSemaphoreTake(sdSemaphore, pdMS_TO_TICKS(5)) == pdTRUE) {
-            serviceMusic();
-            xSemaphoreGive(sdSemaphore);
-        } else { ++musicSdWaits; }
+        // Keep SD ownership short, but when the audioI2S input buffer is getting
+        // low allow a few cooperative refill passes. Releasing the mutex after
+        // every pass preserves fairness for uploads/GIF/MJPEG/history writes.
+        const uint32_t before = musicInputBufferBytes.load();
+        const uint8_t refillPasses =
+            (musicBufferPrimed && before < MUSIC_CRITICAL_BUFFER_BYTES) ? 4 :
+            (musicBufferPrimed && before < MUSIC_REFILL_LOW_WATER_BYTES) ? 2 : 1;
+        for (uint8_t pass = 0; pass < refillPasses; ++pass) {
+          if(xSemaphoreTake(sdSemaphore, pdMS_TO_TICKS(8)) == pdTRUE) {
+              serviceMusic();
+              xSemaphoreGive(sdSemaphore);
+          } else {
+              musicSdWaits.fetch_add(1);
+              break;
+          }
+          if (pass + 1 < refillPasses) taskYIELD();
+        }
       }
 
       if (currentState == STATE_PLAYING && (millis() - lastProgressUpdate >= 1000)) {
