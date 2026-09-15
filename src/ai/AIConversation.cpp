@@ -82,7 +82,7 @@ bool AIConversation::loadConfig() {
                     sizeof(config.systemInstruction));
         }
     }
-    lastError = "";
+    clearError();
     state = "idle";
     return true;
 }
@@ -145,7 +145,7 @@ bool AIConversation::saveConfig(const JsonDocument& document) {
     preferences.putString("sysPrompt", config.systemInstruction);
     preferences.end();
 
-    lastError = "";
+    clearError();
     state = "idle";
     return true;
 }
@@ -162,8 +162,8 @@ String AIConversation::getConfigJson(bool includeSecrets) const {
     document["systemInstruction"] = config.systemInstruction;
     document["configured"] = isConfigured();
     document["liveProvider"] = isLiveProvider();
-    document["state"] = state;
-    document["lastError"] = lastError;
+    document["state"] = state.load();
+    document["lastError"] = errorSnapshot();
     document["liveActive"] = isLiveSessionActive();
     document["liveReady"] = isLiveSessionReady();
     if (includeSecrets) {
@@ -185,8 +185,8 @@ String AIConversation::getStatusJson() const {
     document["enabled"] = config.enabled;
     document["configured"] = isConfigured();
     document["provider"] = config.provider;
-    document["state"] = state;
-    document["lastError"] = lastError;
+    document["state"] = state.load();
+    document["lastError"] = errorSnapshot();
     document["liveActive"] = isLiveSessionActive();
     document["liveReady"] = isLiveSessionReady();
     document["txAudioChunks"] = liveTxAudioChunks.load();
@@ -213,7 +213,7 @@ bool AIConversation::isConfigured() const {
 }
 
 bool AIConversation::isLiveSessionActive() const {
-    return liveTaskHandle != nullptr && !liveStopRequested.load();
+    return liveWorkerRunning.load() && !liveStopRequested.load();
 }
 
 bool AIConversation::isLiveSessionReady() const {
@@ -228,8 +228,24 @@ bool AIConversation::isLiveResponseActive() const {
 }
 
 void AIConversation::setError(const String& message) {
-    lastError = message;
-    state = "error";
+    portENTER_CRITICAL(&errorMux);
+    strlcpy(lastError, message.c_str(), sizeof(lastError));
+    portEXIT_CRITICAL(&errorMux);
+    state.store("error");
+}
+
+void AIConversation::clearError() {
+    portENTER_CRITICAL(&errorMux);
+    lastError[0] = 0;
+    portEXIT_CRITICAL(&errorMux);
+}
+
+String AIConversation::errorSnapshot() const {
+    char copy[sizeof(lastError)];
+    portENTER_CRITICAL(&errorMux);
+    strlcpy(copy, lastError, sizeof(copy));
+    portEXIT_CRITICAL(&errorMux);
+    return String(copy);
 }
 
 void AIConversation::sendJson(AsyncWebServerRequest* request, int statusCode, const String& body) {
@@ -271,7 +287,7 @@ void AIConversation::handleConfigRequest(AsyncWebServerRequest* request) {
     }
 
     if (!saveConfig(document)) {
-        sendJson(request, 400, String("{\"ok\":false,\"error\":\"") + lastError + "\"}");
+        sendJson(request, 400, String("{\"ok\":false,\"error\":\"") + errorSnapshot() + "\"}");
         return;
     }
     sendJson(request, 200, "{\"ok\":true}");
@@ -359,7 +375,7 @@ bool AIConversation::submitAudioFile(const char* path, String& responseBody) {
         return false;
     }
     state = "completed";
-    lastError = "";
+    clearError();
     return true;
 }
 
@@ -377,7 +393,7 @@ bool AIConversation::startLiveSession() {
     if (!isLiveProvider()) return false;
     if (!isConfigured()) { setError("Gemini Live requires an API key and model"); return false; }
     if (WiFi.status() != WL_CONNECTED) { setError("WiFi is not connected"); return false; }
-    if (liveTaskHandle != nullptr) return true;
+    if (liveWorkerRunning.load()) return true;
     if (!startLivePcmOutput()) { setError("Unable to allocate live speaker buffer"); return false; }
 
     liveStopRequested.store(false);
@@ -394,8 +410,10 @@ bool AIConversation::startLiveSession() {
     liveSpeakerWasBusy = false;
     liveSessionHandle = "";
     liveGoAwaySeen = false;
+    liveHistoryInterrupted = false;
+    liveHistoryModelTranscriptSeen = false;
     state = "live_connecting";
-    lastError = "";
+    clearError();
 
     liveWorkerRunning=true;
     if (xTaskCreatePinnedToCore(liveTaskEntry, "GeminiLive", 18 * 1024, this, 3, &liveTaskHandle, 0) != pdPASS) {
@@ -635,11 +653,18 @@ void AIConversation::handleLiveServerMessage(uint8_t* payload, size_t length) {
         liveSocket.setReconnectInterval(liveReconnectBackoffMs);
         liveModelTurnActive.store(false);
         liveGenerationComplete.store(false);
+        // A transport reconnect can resume the same logical Gemini session. Keep
+        // history turn state across a resumed socket so one spoken turn is not
+        // split into artificial partial records. A new session starts clean.
+        if (!liveSessionHandle.length()) {
+            liveHistoryInterrupted = false;
+            liveHistoryModelTranscriptSeen = false;
+        }
         liveMicResumeAfterMs = 0;
         liveMicSuspended = false;
         liveLastModelEventMs = millis();
         liveSpeakerWasBusy = false;
-        lastError = "";
+        clearError();
         Serial.println("[GEMINI] Setup complete");
         Serial.printf("[MEMORY] Live ready | internal=%u PSRAM=%u largest=%u minimum=%u stackFree=%u TLS=%s\n",ESP.getFreeHeap(),ESP.getFreePsram(),ESP.getMaxAllocHeap(),ESP.getMinFreeHeap(),static_cast<unsigned>(uxTaskGetStackHighWaterMark(nullptr)),memory::tlsUsesPsram()?"PSRAM preferred":"SDK default");
         if (!startLiveMicrophoneStream()) {
@@ -683,10 +708,28 @@ void AIConversation::handleLiveServerMessage(uint8_t* payload, size_t length) {
         return;
     }
 
-    chatHistory.transcript(false,serverContent["inputTranscription"]["text"]|"");
-    chatHistory.transcript(true,serverContent["outputTranscription"]["text"]|"");
+    const char* inputTranscript = serverContent["inputTranscription"]["text"] | "";
+    const char* outputTranscript = serverContent["outputTranscription"]["text"] | "";
+    if (inputTranscript[0]) chatHistory.transcript(false,inputTranscript);
+    if (outputTranscript[0]) {
+        // Gemini sends transcription fragments independently from model/audio
+        // messages. With barge-in enabled, sealing the user side when the first
+        // model transcript arrives prevents an interrupting user utterance from
+        // being appended to the previous user turn. With barge-in disabled we
+        // intentionally wait until turnComplete because late input transcript
+        // fragments are allowed to arrive out of order.
+        if (config.liveBargeIn && !liveHistoryModelTranscriptSeen) chatHistory.finishUser();
+        liveHistoryModelTranscriptSeen = true;
+        chatHistory.transcript(true,outputTranscript);
+    }
     if (serverContent["interrupted"] | false) {
-        chatHistory.finish(true);
+        liveHistoryInterrupted = true;
+        // The final output-transcription fragment is documented to precede the
+        // interrupted event, so the model side can be safely sealed as partial.
+        // When barge-in is off there cannot be a new local user utterance during
+        // playback, so seal the original user side too.
+        if (!config.liveBargeIn) chatHistory.finishUser();
+        chatHistory.finishModel(true);
         clearLivePcmOutput();
         liveModelTurnActive.store(false);
         liveGenerationComplete.store(false);
@@ -734,9 +777,11 @@ void AIConversation::handleLiveServerMessage(uint8_t* payload, size_t length) {
     }
 
     if (serverContent["generationComplete"] | false) {
-        // Output transcription is complete here; turnComplete may be delayed
-        // until playback ends. The later finish only commits additional text.
-        chatHistory.finish();
+        // Do not commit chat history here. Gemini documents transcription as an
+        // independent stream with no guaranteed ordering relative to modelTurn.
+        // turnComplete is the logical turn boundary; committing early here can
+        // leave late transcription fragments stranded and merged into the next
+        // turn.
         liveLastModelEventMs = millis();
         liveGenerationComplete.store(true);
         finishLivePcmInput();
@@ -744,7 +789,20 @@ void AIConversation::handleLiveServerMessage(uint8_t* payload, size_t length) {
     }
 
     if (serverContent["turnComplete"] | false) {
-        chatHistory.finish();
+        // turnComplete is the reliable model-turn boundary. For a normal turn,
+        // commit both sides here so late transcription fragments stay with the
+        // correct turn. For an interrupted/barge-in turn the model was already
+        // sealed as partial and the user buffer may now contain the next utterance,
+        // so leave that user buffer open for the next response.
+        if (!liveHistoryInterrupted) {
+            // One queued boundary marker commits both roles atomically. This also
+            // reduces pressure on ChatHistory's realtime ingress queue.
+            chatHistory.finish();
+        } else {
+            chatHistory.finishModel(true);
+        }
+        liveHistoryInterrupted = false;
+        liveHistoryModelTranscriptSeen = false;
         finishLivePcmInput(); // also covers servers that omit generationComplete
         liveModelTurnActive.store(false);
         liveGenerationComplete.store(false);
@@ -810,9 +868,17 @@ void AIConversation::handleLiveSocketEvent(WStype_t type, uint8_t* payload, size
             resetLiveWsFragment();
             break;
         case WStype_DISCONNECTED: {
-            chatHistory.finish(true);
             const bool wasReady = liveSetupComplete.load();
             const bool plannedRotation = liveGoAwaySeen;
+            const bool canResumeTurn = !liveStopRequested.load() && wasReady && liveSessionHandle.length();
+            // A socket rotation/reconnect is transport-level, not a conversation
+            // boundary. Preserve the in-progress transcript when Gemini gave us a
+            // resumption handle; otherwise flush it as partial so text is not lost.
+            if (!canResumeTurn) {
+                chatHistory.finish(true);
+                liveHistoryInterrupted = false;
+                liveHistoryModelTranscriptSeen = false;
+            }
             liveGoAwaySeen = false;
             liveSocketConnected.store(false);
             liveSetupComplete.store(false);
@@ -838,9 +904,9 @@ void AIConversation::handleLiveSocketEvent(WStype_t type, uint8_t* payload, size
                 liveReconnectBackoffMs = delayMs;
                 liveSocket.setReconnectInterval(liveReconnectBackoffMs);
                 const uint32_t connectedForMs = liveConnectedAtMs ? static_cast<uint32_t>(millis() - liveConnectedAtMs) : 0;
-                Serial.printf("[GEMINI] WebSocket disconnected | ready=%s | rotation=%s | resume=%s | connected=%lu ms | TX=%u RX=%u dropped=%u | heap=%u psram=%u | reason=%s | retry=%lu ms\n",
+                Serial.printf("[GEMINI] WebSocket disconnected | ready=%s | rotation=%s | resume=%s | history=%s | connected=%lu ms | TX=%u RX=%u dropped=%u | heap=%u psram=%u | reason=%s | retry=%lu ms\n",
                               wasReady ? "yes" : "no", plannedRotation ? "yes" : "no",
-                              liveSessionHandle.length() ? "yes" : "no",
+                              liveSessionHandle.length() ? "yes" : "no", canResumeTurn ? "preserved" : "partial",
                               static_cast<unsigned long>(connectedForMs),
                               static_cast<unsigned>(liveTxAudioChunks.load()),
                               static_cast<unsigned>(liveRxAudioChunks.load()),
@@ -1022,7 +1088,7 @@ void AIConversation::runLiveSession() {
                     }
                 }
             }
-            if (!speakerBusy && !liveModelTurnActive.load() && state == "live_speaking") state = "live_listening";
+            if (!speakerBusy && !liveModelTurnActive.load() && strcmp(state.load(), "live_speaking") == 0) state = "live_listening";
             if (static_cast<uint32_t>(nowMs - lastDiagnosticMs) >= 10000) {
                 lastDiagnosticMs = nowMs;
                 Serial.printf("[GEMINI] Audio flow | captured=%u TX=%u RX=%u queued=%u micPaused=%u modelTurn=%u\n",
@@ -1039,6 +1105,11 @@ void AIConversation::runLiveSession() {
         for (int i = 0; i < 3; ++i) { liveSocket.loop(); vTaskDelay(pdMS_TO_TICKS(10)); }
     }
     liveSocket.disconnect();
+    // stopLiveSession is a real conversation boundary even if the WebSocket
+    // library does not dispatch DISCONNECTED before this worker exits.
+    chatHistory.finish(true);
+    liveHistoryInterrupted = false;
+    liveHistoryModelTranscriptSeen = false;
     stopLiveMicrophoneStream();
     stopLivePcmOutput();
     releaseLiveDecodeBuffer();
@@ -1049,7 +1120,7 @@ void AIConversation::runLiveSession() {
     liveSessionHandle = "";
     liveGoAwaySeen = false;
     state = "idle";
-    lastError = "";
+    clearError();
     liveTaskHandle = nullptr;
     liveStopRequested.store(false);
     liveWorkerRunning=false;

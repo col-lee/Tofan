@@ -5,7 +5,8 @@ export function historyWarnings(s){
  if(s.full)warnings.push('ประวัติแชทเต็มแล้ว หยุดบันทึกข้อความใหม่ลง SD กรุณาอ่านและรีเซ็ตประวัติ');
  else if(s.long)warnings.push('ประวัติแชทยาวแล้ว เมื่อเชื่อมต่อใหม่ AI จะใช้เฉพาะข้อความล่าสุด ไม่เกิน 8 ข้อความ / 8 KiB ส่วนข้อความเก่ายังเปิดอ่านจาก SD ได้');
  if(s.truncated)warnings.push('มีข้อความยาวเกินขนาดที่บันทึกได้ จึงเก็บไว้บางส่วน');
- if(s.dropped)warnings.push(`มีข้อความ ${s.dropped} รายการที่บันทึกไม่ทัน`);
+ if(s.boundaryDrops)warnings.push(`มีจุดจบรอบสนทนา ${s.boundaryDrops} ครั้งที่คิวรับไม่ทัน อาจทำให้ประวัติรอบนั้นไม่สมบูรณ์`);
+ if(s.dropped)warnings.push(`มีข้อมูลประวัติ ${s.dropped} รายการที่คิวรับหรือบันทึกไม่ทัน`);
  return warnings;
 }
 export function mountHistory({root,api,ask,notice}){
@@ -14,7 +15,7 @@ export function mountHistory({root,api,ask,notice}){
  const $=s=>root.querySelector(s);
  const status=s=>{
   current=s;$('#historyStats').textContent=s.resetting?'กำลังหยุดบทสนทนาและล้างประวัติ…':`${s.count||0} ข้อความ · ${s.storage==='sd'?'SD card':'RAM ชั่วคราว'} · ${Math.ceil((s.bytes||0)/1024)} / ${Math.ceil((s.maxBytes||1048576)/1024)} KiB${s.pending?` · รอบันทึก ${s.pending} ข้อความ`:''}`;
-  $('#historyCapture').textContent=`รับข้อความถอดเสียงแล้ว ${s.receivedChunks||0} ชุด · รอประมวลผล ${s.incoming||0} ชุด · ข้อความรอจบรอบ ${s.assemblingBytes||0} ไบต์`;
+  $('#historyCapture').textContent=`รับข้อความถอดเสียงแล้ว ${s.receivedChunks||0} ชุด (${s.receivedBytes||0} ไบต์ UTF-8 รวม) · คิว ${s.incoming||0} ชุด · รอบปัจจุบัน คุณ ${s.assemblingUserBytes||0} + AI ${s.assemblingModelBytes||0} = ${s.assemblingBytes||0} ไบต์ UTF-8`;
   $('#historyCapacity').value=s.bytes||0;$('#historyCapacity').max=s.maxBytes||1048576;
   const warnings=historyWarnings(s),box=$('#historyWarnings');box.replaceChildren();box.hidden=!warnings.length;
   warnings.forEach(w=>{const p=document.createElement('p');p.textContent=w;box.append(p);});

@@ -26,7 +26,7 @@ void saveSettings() { userSettings.save(); }
 void drawCurrent() {
     switch(DISM.currentState) {
         case UI_STATE::HOME_MENU: DISM.drawHomeMenu(); break;
-        case UI_STATE::APP_MUSIC: DISM.drawMusicPlayer(currentSongTitle,currentAudioProgress,isPlayingAudio); break;
+        case UI_STATE::APP_MUSIC: DISM.drawMusicPlayer(getCurrentSongTitle(),currentAudioProgress,isPlayingAudio); break;
         case UI_STATE::APP_ONLINE_MUSIC: DISM.drawOnlineMusicPlayer(); break;
         case UI_STATE::APP_MUSIC_LIST: DISM.drawMusicList(); break;
         case UI_STATE::APP_DISPLAY_LIST: DISM.drawImageList(); break;
@@ -211,8 +211,13 @@ void InputController::handleInput() {
             if(media::validIndex(DISM.imageSelectedIndex,DISM.imagePaths.size())) {
                 DISPLAY_COMMAND cmd{};cmd.module=DISPLAY_COMMAND::DIS;cmd.display_state=DISPLAY_COMMAND::SHOW;
                 cmd.path=DISM.imagePaths[DISM.imageSelectedIndex];
+                // Prepare direct-media rendering before the display task can consume SHOW.
+                // If enqueue fails, restore the list UI instead of blocking the main loop forever.
                 DISM.deleteUISprite();DISM.currentState=UI_STATE::APP_DISPLAY;
-                xQueueSend(display_command,&cmd,portMAX_DELAY);
+                if(xQueueSend(display_command,&cmd,pdMS_TO_TICKS(75))!=pdTRUE) {
+                    Serial.println("Display show request skipped: display queue busy");
+                    DISM.currentState=UI_STATE::APP_DISPLAY_LIST;DISM.createUISprite();drawCurrent();
+                }
             }
         } else if(DISM.currentState==UI_STATE::APP_MUSIC) {
             int i=DISM.currentMusicControlIndex;
@@ -271,8 +276,14 @@ void InputController::handleInput() {
         if(!isBackBtnLongPressed) {
             if(DISM.currentState==UI_STATE::APP_DISPLAY) {
                 DISPLAY_COMMAND cmd{};cmd.module=DISPLAY_COMMAND::DIS;cmd.display_state=DISPLAY_COMMAND::CLEAR;
-                DISM.mediaClearComplete.store(false);xQueueSend(display_command,&cmd,portMAX_DELAY);
-                DISM.currentState=UI_STATE::APP_DISPLAY_CLOSING;
+                // Publish the wait state before enqueue: the display task may clear the panel
+                // immediately on Core 1, so setting mediaClearComplete=false afterwards can
+                // overwrite its completion signal and leave APP_DISPLAY_CLOSING stuck forever.
+                DISM.mediaClearComplete.store(false);DISM.currentState=UI_STATE::APP_DISPLAY_CLOSING;
+                if(xQueueSend(display_command,&cmd,pdMS_TO_TICKS(75))!=pdTRUE) {
+                    Serial.println("Display clear request skipped: display queue busy");
+                    DISM.mediaClearComplete.store(true);DISM.currentState=UI_STATE::APP_DISPLAY;
+                }
             } else if(DISM.currentState==UI_STATE::APP_COLOR_PICKER) {
                 userSettings.values.colors[DISM.colorRole]=DISM.colorBackup;DISM.applyTheme();enter(UI_STATE::APP_SETTINGS);
             } else if(DISM.currentState==UI_STATE::APP_SETTINGS && DISM.settingsPage!=Page::Root) {

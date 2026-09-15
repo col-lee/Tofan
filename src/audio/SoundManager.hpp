@@ -9,7 +9,7 @@
 
 #ifndef ENCODER_VALUE
 #define ENCODER_VALUE
-    extern String currentSongTitle;
+    String getCurrentSongTitle();
     extern bool isPlayingAudio;
     extern bool isOnlineAudio;
     extern bool hasPausedAudio;
@@ -46,7 +46,7 @@ bool enterRecordingMode();
 void exitRecordingMode();
 // No path: create a new numbered recording. Explicit paths are scratch files (AI Pet).
 bool startRecording(const char* path = nullptr);
-const String& getRecordingName();
+String getRecordingName();
 void recordLoop();
 void stopRecording();
 bool isMicrophoneReady();

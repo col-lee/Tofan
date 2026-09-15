@@ -284,7 +284,7 @@ void DisplayManager::drawPopupNoMusic(bool pushToScreen) {
 }
 
 void DisplayManager::drawOnlineMusicPlayer(bool pushToScreen) {
-    drawMusicSurface(true, isOnlineAudio ? currentSongTitle : String(onlineStationNames[currentStationIndex]),
+    drawMusicSurface(true, isOnlineAudio ? getCurrentSongTitle() : String(onlineStationNames[currentStationIndex]),
                      0, isPlayingAudio && isOnlineAudio, pushToScreen);
 }
 

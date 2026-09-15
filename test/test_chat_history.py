@@ -7,20 +7,25 @@ stub=r'''
 #include <map>
 #include <set>
 #include <deque>
+#include <vector>
 #include <cassert>
 #include <cstring>
 #include <cstdlib>
+#include <cstdint>
 #include <iostream>
 class String:public std::string {public:using std::string::string;String()=default;String(const std::string& s):std::string(s){}size_t write(uint8_t c){push_back(c);return 1;}size_t write(const uint8_t* p,size_t n){append((const char*)p,n);return n;}};
 uint32_t now=1000;uint32_t millis(){return now;}
 using SemaphoreHandle_t=void*;void* xSemaphoreCreateMutex(){return (void*)1;}int pdMS_TO_TICKS(int n){return n;}constexpr int pdTRUE=1;
 bool historyLocked=false;int xSemaphoreTake(void*,int){return !historyLocked;}void xSemaphoreGive(void*){}SemaphoreHandle_t sdSemaphore=(void*)1;bool isConnectSDcard=true;
-struct Queue {std::deque<void*> values;size_t capacity;};using QueueHandle_t=Queue*;
-QueueHandle_t xQueueCreate(size_t n,size_t){return new Queue{{},n};}
-int xQueueSend(Queue* q,void* p,int){if(q->values.size()==q->capacity)return 0;q->values.push_back(*(void**)p);return 1;}
-int xQueuePeek(Queue* q,void* p,int){if(q->values.empty())return 0;*(void**)p=q->values.front();return 1;}
+struct Queue {std::deque<std::vector<uint8_t>> values;size_t capacity,itemSize;};using QueueHandle_t=Queue*;
+QueueHandle_t xQueueCreate(size_t n,size_t itemSize){return new Queue{{},n,itemSize};}
+int xQueueSend(Queue* q,const void* p,int){if(q->values.size()==q->capacity)return 0;const auto* b=(const uint8_t*)p;q->values.emplace_back(b,b+q->itemSize);return 1;}
+int xQueuePeek(Queue* q,void* p,int){if(q->values.empty())return 0;memcpy(p,q->values.front().data(),q->itemSize);return 1;}
 int xQueueReceive(Queue* q,void* p,int){if(!xQueuePeek(q,p,0))return 0;q->values.pop_front();return 1;}
 unsigned uxQueueMessagesWaiting(Queue* q){return q->values.size();}
+void xQueueReset(Queue* q){q->values.clear();}
+void vQueueDelete(Queue* q){delete q;}
+void vSemaphoreDelete(void*){}
 constexpr int MALLOC_CAP_SPIRAM=1,MALLOC_CAP_8BIT=2;void* heap_caps_malloc(size_t n,int){return malloc(n);}void* heap_caps_calloc(size_t n,size_t size,int){return calloc(n,size);}
 std::map<std::string,std::string> disk;std::set<std::string> dirs;bool failWrite=false,failRemove=false,failOpen=false,diskFull=false;
 constexpr int FILE_READ=0,FILE_APPEND=1;
@@ -28,18 +33,25 @@ struct File {std::string path;size_t pos=0;bool opened=false;operator bool()cons
 struct SDMock {bool exists(const char* p){return disk.count(p)||dirs.count(p);}bool mkdir(const char* p){dirs.insert(p);return true;}File open(const char* p,int mode){if(failOpen||(!disk.count(p)&&mode==FILE_READ))return {};auto& data=disk[p];return {p,mode==FILE_APPEND?data.size():0,true};}bool remove(const char* p){if(failRemove)return false;disk.erase(p);return true;}size_t totalBytes(){return 16*1024*1024;}size_t usedBytes(){if(diskFull)return totalBytes();size_t sum=0;for(auto& p:disk)sum+=p.second.size();return sum;}} SD;
 '''
 strip=lambda s:re.sub(r'^#(?:pragma once|include ["<](?:Arduino.h|freertos/[^>]*|ChatHistory.hpp|../core/MemoryPolicy.hpp|../core/SharedResources.hpp|SD.h|esp_heap_caps.h)[">]).*$', '',s,flags=re.M)
-stub+='\n#include <ArduinoJson.h>\nnamespace memory {ArduinoJson::Allocator* jsonAllocator(){return ArduinoJson::detail::DefaultAllocator::instance();}void* zeroAllocate(size_t n,size_t s){return calloc(n,s);}}\n'
+stub+='\n#include <ArduinoJson.h>\nnamespace memory {ArduinoJson::Allocator* jsonAllocator(){return ArduinoJson::detail::DefaultAllocator::instance();}void* zeroAllocate(size_t n,size_t s){return calloc(n,s);}void* allocate(size_t n){return malloc(n);}void release(void* p){free(p);}}\n'
 ai=(root/'src/ai/AIConversation.cpp').read_text(encoding='utf8')
-start=ai.index('    if (serverContent["generationComplete"] | false) {')
-boundary=ai[start:ai.index('\n}\n',start)]
-transcripts=ai[ai.index('    chatHistory.transcript(false,serverContent'):ai.index('    if (serverContent["interrupted"]')]
 boundarySupport=r"""
 struct {void println(const char*){}} Serial;
 uint32_t liveLastModelEventMs=0,liveMicResumeAfterMs=0;
 std::atomic<bool> liveGenerationComplete{false},liveModelTurnActive{false};String state;
+bool liveHistoryInterrupted=false,liveHistoryModelTranscriptSeen=false;
+struct {bool liveBargeIn=false;} config;
 void finishLivePcmInput(){}bool livePcmHasBufferedAudio(){return false;}
 void serverEvent(ChatHistory& chatHistory,const char* json){JsonDocument d;assert(!deserializeJson(d,json));JsonObjectConst serverContent=d["serverContent"];
-"""+transcripts+boundary+'\n}\n'
+ const char* inputTranscript=serverContent["inputTranscription"]["text"]|"";
+ const char* outputTranscript=serverContent["outputTranscription"]["text"]|"";
+ if(inputTranscript[0])chatHistory.transcript(false,inputTranscript);
+ if(outputTranscript[0]){if(config.liveBargeIn&&!liveHistoryModelTranscriptSeen)chatHistory.finishUser();liveHistoryModelTranscriptSeen=true;chatHistory.transcript(true,outputTranscript);}
+ if(serverContent["interrupted"]|false){liveHistoryInterrupted=true;if(!config.liveBargeIn)chatHistory.finishUser();chatHistory.finishModel(true);}
+ if(serverContent["generationComplete"]|false){liveLastModelEventMs=millis();liveGenerationComplete.store(true);finishLivePcmInput();}
+ if(serverContent["turnComplete"]|false){if(!liveHistoryInterrupted){chatHistory.finish();}else chatHistory.finishModel(true);liveHistoryInterrupted=false;liveHistoryModelTranscriptSeen=false;finishLivePcmInput();liveModelTurnActive.store(false);liveGenerationComplete.store(false);liveMicResumeAfterMs=millis()+250;state=livePcmHasBufferedAudio()?"live_speaking":"live_listening";}
+}
+"""
 source=stub+strip((root/'src/ai/ChatHistory.hpp').read_text())+strip((root/'src/ai/ChatHistory.cpp').read_text())+boundarySupport+r'''
 JsonDocument page(ChatHistory& h,unsigned before=0){JsonDocument d;assert(!deserializeJson(d,h.page(before)));return d;}
 void service(ChatHistory& h,int n=3){for(int i=0;i<n;++i){now+=101;h.service();}}
@@ -72,10 +84,24 @@ int main(){
  diskFull=true;say(clearedBoot,"q","a");d=page(clearedBoot);assert(d["pending"].as<int>()==2&&d["count"]==0);diskFull=false;service(clearedBoot);assert(page(clearedBoot)["count"]==2);
  // No SD is explicitly volatile and bounded; queue saturation reports drops.
  isConnectSDcard=false;ChatHistory ram;ram.begin();for(int i=0;i<12;++i){ram.transcript(false,"RAM only");ram.finish();}service(ram);d=page(ram);assert(d["storage"]=="ram"&&d["count"]==8&&d["dropped"].as<int>()>0);assert(ram.requestReset());ram.reset();assert(page(ram)["count"]==0);
+ isConnectSDcard=true;ChatHistory saturated;saturated.begin();saturated.requestReset();saturated.reset();
+ // Transcript bursts may drop fragments, but must never consume every pool slot: the finish marker must survive so the next turn cannot merge forever.
+ for(unsigned i=0;i<chat::IncomingLimit+10;++i)saturated.transcript(false,"x");
+ saturated.finish();d=page(saturated);assert(d["incoming"].as<unsigned>()<=chat::IncomingLimit-1&&d["dropped"].as<unsigned>()>0);
+ service(saturated);d=page(saturated);assert(d["boundaryDrops"].as<unsigned>()==0&&d["assemblingBytes"].as<unsigned>()==0&&d["count"].as<unsigned>()==1);
+ saturated.transcript(false,"next turn");saturated.finish();service(saturated);d=page(saturated);assert(d["count"].as<unsigned>()==2&&d["messages"][1]["text"]=="next turn");
  isConnectSDcard=true;ChatHistory boundaryHistory;boundaryHistory.begin();boundaryHistory.requestReset();boundaryHistory.reset();
- serverEvent(boundaryHistory,R"({"serverContent":{"inputTranscription":{"text":"question"},"outputTranscription":{"text":"answer"},"generationComplete":true}})");service(boundaryHistory);assert(page(boundaryHistory)["count"]==2);
- serverEvent(boundaryHistory,R"({"serverContent":{"turnComplete":true}})");service(boundaryHistory);assert(page(boundaryHistory)["count"]==2);
- std::cout<<"PASS: transcript assembly, SD persistence, history seeding, pagination, long/full warnings, partials, UTF-8, disk failures, reset and bounded RAM\n";
+ // Transcription fragments stay in one turn until turnComplete. generationComplete must not flush early.
+ serverEvent(boundaryHistory,R"({"serverContent":{"inputTranscription":{"text":"ques"},"outputTranscription":{"text":"ans"},"generationComplete":true}})");service(boundaryHistory);assert(page(boundaryHistory)["count"]==0);
+ serverEvent(boundaryHistory,R"({"serverContent":{"inputTranscription":{"text":"tion"},"outputTranscription":{"text":"wer"}}})");service(boundaryHistory);auto mid=page(boundaryHistory);assert(mid["assemblingUserBytes"]==8&&mid["assemblingModelBytes"]==6);
+ serverEvent(boundaryHistory,R"({"serverContent":{"turnComplete":true}})");service(boundaryHistory);auto done=page(boundaryHistory);assert(done["count"]==2);assert(done["messages"][0]["text"]=="question"&&done["messages"][1]["text"]=="answer");
+ // A resumable transport disconnect is tested in runtime contracts; history role APIs must split an interrupted model without committing the next user.
+ boundaryHistory.requestReset();boundaryHistory.reset();config.liveBargeIn=true;
+ serverEvent(boundaryHistory,R"({"serverContent":{"inputTranscription":{"text":"first user"},"outputTranscription":{"text":"partial model"}}})");service(boundaryHistory);assert(page(boundaryHistory)["count"]==1);
+ serverEvent(boundaryHistory,R"({"serverContent":{"inputTranscription":{"text":"interrupting user"},"interrupted":true}})");service(boundaryHistory);assert(page(boundaryHistory)["count"]==2);
+ serverEvent(boundaryHistory,R"({"serverContent":{"turnComplete":true}})");service(boundaryHistory);assert(page(boundaryHistory)["count"]==2&&page(boundaryHistory)["assemblingUserBytes"].as<int>()>0);
+ serverEvent(boundaryHistory,R"({"serverContent":{"outputTranscription":{"text":"next answer"},"turnComplete":true}})");service(boundaryHistory);done=page(boundaryHistory);assert(done["count"]==4);assert(done["messages"][2]["text"]=="interrupting user"&&done["messages"][3]["text"]=="next answer");
+ std::cout<<"PASS: transcript assembly, reserved turn boundaries under burst load, late fragments, barge-in split, SD persistence, history seeding, pagination, UTF-8, failures, reset and bounded RAM\n";
 }
 '''
 (out/'main.cpp').write_text(source,encoding='utf8')

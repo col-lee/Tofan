@@ -29,7 +29,6 @@ bool isAudio_install;
 
 String currentFilePath = "";
 
-String currentSongTitle = "Choose a track";
 uint32_t currentAudioTime = 0;
 uint32_t totalAudioDuration = 0;
 
@@ -327,9 +326,32 @@ struct wav_header_t {
 File recordFile;
 uint32_t totalSize = 0;
 static uint32_t nextRecordingNumber = 1;
-static String recordingName = "No recording yet";
-
-const String& getRecordingName() { return recordingName; }
+namespace {
+portMUX_TYPE audioMetadataMux = portMUX_INITIALIZER_UNLOCKED;
+constexpr size_t SongTitleCapacity = 256;
+constexpr size_t RecordingNameCapacity = 96;
+char currentSongTitleText[SongTitleCapacity] = "Choose a track";
+char recordingNameText[RecordingNameCapacity] = "No recording yet";
+void setMetadata(char* destination,size_t capacity,const char* value){
+    if(!value)value="";
+    portENTER_CRITICAL(&audioMetadataMux);
+    strlcpy(destination,value,capacity);
+    portEXIT_CRITICAL(&audioMetadataMux);
+}
+String snapshotMetadata(const char* source,size_t capacity){
+    char copy[SongTitleCapacity];
+    const size_t copyCapacity=capacity>sizeof(copy)?sizeof(copy):capacity;
+    portENTER_CRITICAL(&audioMetadataMux);
+    strlcpy(copy,source,copyCapacity);
+    portEXIT_CRITICAL(&audioMetadataMux);
+    return String(copy);
+}
+void setCurrentSongTitle(const char* value){setMetadata(currentSongTitleText,sizeof(currentSongTitleText),value);}
+void setCurrentSongTitle(const String& value){setCurrentSongTitle(value.c_str());}
+void setRecordingName(const char* value){setMetadata(recordingNameText,sizeof(recordingNameText),value);}
+}
+String getCurrentSongTitle(){return snapshotMetadata(currentSongTitleText,sizeof(currentSongTitleText));}
+String getRecordingName(){return snapshotMetadata(recordingNameText,sizeof(recordingNameText));}
 
 bool isOnlineAudio = false;
 bool hasPausedAudio = false;
@@ -927,7 +949,7 @@ void handleAudio(void *parameter) {
               // well caused the Audio object to be torn down twice during fast
               // music -> video transitions.
               if (isOnlineAudio) {
-                  currentSongTitle = "Online radio";
+                  setCurrentSongTitle("Online radio");
                   connected = audio.connecttohost(currentFilePath.c_str());
               } else {
                   if(xSemaphoreTake(sdSemaphore, pdMS_TO_TICKS(1000)) == pdTRUE) {
@@ -947,9 +969,9 @@ void handleAudio(void *parameter) {
 
                   int lastSlashIndex = requestedPath.lastIndexOf('/');
                   if (lastSlashIndex >= 0) {
-                      currentSongTitle = requestedPath.substring(lastSlashIndex + 1);
+                      setCurrentSongTitle(requestedPath.substring(lastSlashIndex + 1));
                   } else {
-                      currentSongTitle = requestedPath;
+                      setCurrentSongTitle(requestedPath);
                   }
               }
 
@@ -965,7 +987,7 @@ void handleAudio(void *parameter) {
             videoAudioClock.store(0);
             if (connected && cmd.trackIndex >= 0) playbackEvents.markStarted(cmd.trackIndex);
             hasPausedAudio = false;
-            if (!connected) currentSongTitle = "Unable to play - retry";
+            if (!connected) setCurrentSongTitle("Unable to play - retry");
             break;
           }
 
@@ -1037,7 +1059,7 @@ void handleAudio(void *parameter) {
         currentTrackIsVideoAudio = false;
         videoAudioActive.store(false);
       }
-      if (isOnlineAudio) currentSongTitle = "Stream ended - retry";
+      if (isOnlineAudio) setCurrentSongTitle("Stream ended - retry");
     }
     if(currentState == STATE_STOPPED || currentState == STATE_PAUSED) {
       vTaskDelay(pdMS_TO_TICKS(10));
@@ -1060,7 +1082,7 @@ void audio_id3data(const char *info){
     String id3 = String(info);
     // ไลบรารีจะส่งข้อความมาในรูปแบบ "Title: ชื่อเพลง"
     if(id3.startsWith("Title: ")){
-        currentSongTitle = id3.substring(7); // ตัดคำว่า "Title: " ออก
+        setCurrentSongTitle(id3.substring(7)); // ตัดคำว่า "Title: " ออก
 
     }
 }
@@ -1147,7 +1169,7 @@ bool startRecording(const char* path) {
 
     if (numbered) {
         const char* basename = strrchr(path, '/');
-        recordingName = basename ? basename + 1 : path;
+        setRecordingName(basename ? basename + 1 : path);
     }
     totalSize = 0;
     recordingDroppedFrames = 0;
@@ -1228,10 +1250,10 @@ uint32_t getRecordingDroppedFrames() {
 }
 
 void audio_showstation(const char *info) {
-    if (info && *info) currentSongTitle = info;
+    if (info && *info) setCurrentSongTitle(info);
 }
 void audio_showstreamtitle(const char *info) {
-    if (info && *info) currentSongTitle = info;
+    if (info && *info) setCurrentSongTitle(info);
 }
 
 void audio_eof_wav(const char *info) { audio_eof_mp3(info); }

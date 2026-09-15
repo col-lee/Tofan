@@ -6,6 +6,13 @@ ai_h = (ROOT / "src/ai/AIConversation.hpp").read_text(encoding="utf-8")
 audio = (ROOT / "src/audio/SoundManager.cpp").read_text(encoding="utf-8")
 media = (ROOT / "src/display/MediaPlayback.cpp").read_text(encoding="utf-8")
 
+chat_h = (ROOT / "src/ai/ChatHistory.hpp").read_text(encoding="utf-8")
+chat = (ROOT / "src/ai/ChatHistory.cpp").read_text(encoding="utf-8")
+app = (ROOT / "src/app/Application.cpp").read_text(encoding="utf-8")
+coordinator = (ROOT / "src/app/AppCoordinator.cpp").read_text(encoding="utf-8")
+input_controller = (ROOT / "src/app/InputController.cpp").read_text(encoding="utf-8")
+audio_h = (ROOT / "src/audio/SoundManager.hpp").read_text(encoding="utf-8")
+
 checks = {
     "Gemini setup requests session resumption": 'setup["sessionResumption"]' in ai,
     "Gemini reconnect sends stored session handle": 'resumption["handle"] = liveSessionHandle' in ai,
@@ -29,6 +36,17 @@ checks = {
     "Gemini speaker detects queue underruns and re-buffers": 'PCM underrun #' in audio and 'livePlaybackPrimed = false' in audio,
     "Gemini generation completion releases short replies from prebuffer": 'finishLivePcmInput();' in ai and 'generationComplete' in ai,
     "Gemini speaker exposes buffering and underrun diagnostics": 'speakerBuffering' in ai and 'speakerUnderruns' in ai and 'speakerBufferedMs' in ai,
+
+    "Chat history reserves ingress slots for turn boundaries": 'FinishReserve=2' in chat_h and 'uxQueueMessagesWaiting(incomingFree)<=chat::FinishReserve' in chat,
+    "Chat history exposes dropped turn-boundary diagnostics": 'boundaryDrops' in chat_h and 'd["boundaryDrops"]' in chat,
+    "Normal Gemini turn uses one atomic history boundary": 'chatHistory.finish();' in ai,
+    "Gemini generationComplete does not prematurely commit history": 'Do not commit chat history here' in ai and 'if (serverContent["generationComplete"]' in ai,
+    "Resumable WebSocket disconnect preserves in-progress history": 'canResumeTurn' in ai and 'if (!canResumeTurn)' in ai,
+    "Audio metadata no longer exposes mutable cross-core String globals": 'extern String currentSongTitle' not in audio_h and 'String getCurrentSongTitle()' in audio_h and 'audioMetadataMux' in audio,
+    "AI status state is atomic and error text is snapshotted": 'std::atomic<const char*> state' in ai_h and 'errorMux' in ai_h and 'errorSnapshot()' in ai,
+    "Application does not start tasks after initialization failure": 'if (!initializeSystem())' in app and 'applicationReady' in app,
+    "Application tears down partially-created background tasks": 'vTaskDelete(t_handleAudio)' in app and 'vTaskDelete(runnet)' in app and 'vTaskDelete(t_handleDisplay)' in app,
+    "UI/audio command producers avoid unbounded main-loop queue waits": 'xQueueSend(audio_command, &command, portMAX_DELAY)' not in coordinator and 'xQueueSend(display_command,&cmd,portMAX_DELAY)' not in input_controller,
 }
 
 failed = [name for name, ok in checks.items() if not ok]

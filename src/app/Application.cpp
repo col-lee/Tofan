@@ -21,7 +21,7 @@
 #include "InputController.hpp"
 #include "../core/GlobalState.hpp"
 
-static void initializeSystem() {
+static bool initializeSystem() {
     Serial.begin(115200);
     Serial.println("start...");
     memory::begin();
@@ -30,14 +30,14 @@ static void initializeSystem() {
     displaySemaphore = xSemaphoreCreateMutex();
     if (!sdSemaphore || !displaySemaphore) {
         Serial.println("Failed to create semaphores!");
-        return;
+        return false;
     }
 
     display_command = xQueueCreate(10, sizeof(DISPLAY_COMMAND));
     audio_command = xQueueCreate(10, sizeof(AUDIO_COMMAND));
     if (display_command == NULL || audio_command == NULL) {
         Serial.println("Create queue error.");
-        return;
+        return false;
     }
 
     userSettings.begin();
@@ -56,17 +56,22 @@ static void initializeSystem() {
     vTaskDelay(pdMS_TO_TICKS(500));
 
     hwManager.initDevices();
+    return true;
 }
 
-static void startBackgroundTasks() {
+static bool startBackgroundTasks() {
     BaseType_t task1 = xTaskCreatePinnedToCore(handleAudio, "handleAudio", TASK_STACK_AUDIO, NULL, 4, &t_handleAudio, 0);
     BaseType_t netWorkTask = xTaskCreatePinnedToCore(runNet, "runNet", TASK_STACK_NETWORK, NULL, 3, &runnet, 0);
     BaseType_t disPTask = xTaskCreatePinnedToCore(handleDisplay, "handleDisplay", TASK_STACK_DISPLAY, NULL, 2, &t_handleDisplay, 1);
 
     if (task1 != pdPASS || netWorkTask != pdPASS || disPTask != pdPASS) {
         Serial.println("Create Task Error.");
-        return;
+        if (t_handleAudio) { vTaskDelete(t_handleAudio); t_handleAudio = nullptr; }
+        if (runnet) { vTaskDelete(runnet); runnet = nullptr; }
+        if (t_handleDisplay) { vTaskDelete(t_handleDisplay); t_handleDisplay = nullptr; }
+        return false;
     }
+    return true;
 }
 
 static void showBootSequence() {
@@ -81,15 +86,25 @@ static void showBootSequence() {
     delay(100);
 }
 
+namespace { bool applicationReady = false; }
+
 void app::begin() {
-    initializeSystem();
-    startBackgroundTasks();
+    if (!initializeSystem()) {
+        Serial.println("[APP] Initialization failed; background tasks were not started");
+        return;
+    }
+    if (!startBackgroundTasks()) {
+        Serial.println("[APP] Task startup failed; application left in safe idle state");
+        return;
+    }
     showBootSequence();
     appCoordinator.begin();
     inputController.begin();
+    applicationReady = true;
 }
 
 void app::update() {
+    if (!applicationReady) { delay(100); return; }
     serviceWebPortal();
     if (webFirmwareUpdating()) { delay(1); return; }
     chatHistory.service();

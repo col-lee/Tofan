@@ -50,8 +50,9 @@ public:
 private:
     Preferences preferences;
     AIServiceConfig config;
-    String state = "idle";
-    String lastError;
+    std::atomic<const char*> state{"idle"};
+    mutable portMUX_TYPE errorMux = portMUX_INITIALIZER_UNLOCKED;
+    char lastError[192] = "";
 
     WebSocketsClient liveSocket;
     TaskHandle_t liveTaskHandle = nullptr;
@@ -84,8 +85,12 @@ private:
     bool liveWsFragmentActive = false;
     String liveSessionHandle;
     bool liveGoAwaySeen = false;
+    bool liveHistoryInterrupted = false;
+    bool liveHistoryModelTranscriptSeen = false;
 
     void setError(const String& message);
+    void clearError();
+    String errorSnapshot() const;
     static void sendJson(AsyncWebServerRequest* request, int statusCode, const String& body);
     void handleConfigRequest(AsyncWebServerRequest* request);
     void handleConfigBody(AsyncWebServerRequest* request, uint8_t* data, size_t length, size_t index, size_t total);

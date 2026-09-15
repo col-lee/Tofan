@@ -67,6 +67,7 @@ public:
 };
 LGFX tft;LGFX_Sprite spr;UserSettings userSettings;
 String currentSongTitle="Morning light";
+String getCurrentSongTitle(){return currentSongTitle;}
 bool isPlayingAudio=true,isOnlineAudio=false;
 int currentAudioProgress=34,currentStationIndex=0;
 uint32_t currentAudioTime=83,totalAudioDuration=245;

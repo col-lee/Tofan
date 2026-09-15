@@ -66,8 +66,11 @@ static void processAIPetVoice(void* parameter) {
         command.module = AUDIO_COMMAND::MODULE::AUDIO;
         command.audio_state = AUDIO_COMMAND::AUDIO_STATE::PLAY;
         command.path = audioUrl;
-        xQueueSend(audio_command, &command, portMAX_DELAY);
-        Serial.println("AI voice response queued for playback");
+        if (xQueueSend(audio_command, &command, pdMS_TO_TICKS(100)) == pdTRUE) {
+            Serial.println("AI voice response queued for playback");
+        } else {
+            Serial.println("AI voice response dropped: audio queue busy");
+        }
     } else {
         Serial.println("AI voice response did not contain a playable audioUrl");
     }

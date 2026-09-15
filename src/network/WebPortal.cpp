@@ -520,7 +520,7 @@ void serviceWebPortal() {
     }
     d["sd"]=isConnectSDcard;if(storageChecked){d["storageTotal"]=storageTotal;d["storageUsed"]=storageUsed;}d["storageCached"]=true;d["storageKnown"]=storageChecked!=0;
     d["musicSdWaits"]=getMusicSdWaits();d["musicMaxServiceGapMs"]=getMusicMaxServiceGapMs();
-    d["playing"]=isPlayingAudio;d["title"]=currentSongTitle;d["current"]=currentAudioTime;d["duration"]=totalAudioDuration;d["recording"]=app::runtime.isRecording;d["busy"]=transfer.load();
+    d["playing"]=isPlayingAudio;d["title"]=getCurrentSongTitle();d["current"]=currentAudioTime;d["duration"]=totalAudioDuration;d["recording"]=app::runtime.isRecording;d["busy"]=transfer.load();
     {Guard g(portalMutex);if(g.held){d["audioImportState"]=audioImportState;d["audioImportError"]=audioImportError;d["audioImportDone"]=audioImportDone;d["audioImportTotal"]=audioImportTotal;}}
     auto custom=d["customPet"].to<JsonObject>();const auto& cp=userSettings.customPet;
     custom["background"]=cp.background;custom["face"]=cp.face;custom["accent"]=cp.accent;custom["cheeks"]=cp.cheeks;
