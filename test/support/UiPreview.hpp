@@ -81,3 +81,5 @@ struct {
     void updateAllStatus(){} int getDeviceCount(){return 8;}
     Device getDevice(int){return Device{};} String getStatusString(int){return "Ready";}
 } hwManager;
+
+namespace espnow {struct Summary {bool enabled=true,ready=true;uint8_t channel=6,count=3,online=2;uint32_t tx=123,rx=120,failed=3;};inline Summary summary(){return {};}}

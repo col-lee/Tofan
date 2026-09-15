@@ -1,0 +1,9 @@
+{"op":"rect","a":[0,0,320,240,63454]}
+{"op":"text","a":[16,10,4,0,8583],"text":"ESP-NOW"}
+{"op":"text","a":[17,40,1,0,27567],"text":"Radio ready"}
+{"op":"text","a":[20,62,4,0,8583],"text":"Peers online: 2 / 3"}
+{"op":"text","a":[20,101,2,0,27567],"text":"Wi-Fi channel: 6"}
+{"op":"text","a":[20,130,2,0,27567],"text":"TX 123    RX 120"}
+{"op":"text","a":[20,157,2,0,27567],"text":"Send failures: 3"}
+{"op":"text","a":[20,185,1,0,27567],"text":"Manage peers on the signed-in web page"}
+{"op":"text","a":[160,230,1,4,27567],"text":"Settings > Network   /   Back to return"}

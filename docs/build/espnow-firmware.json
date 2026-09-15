@@ -1,0 +1,22 @@
+﻿{
+    "slaveExampleBuild":  "passed",
+    "staticRamBytes":  103492,
+    "previews":  [
+                     "docs/build/web-preview/espnow.png",
+                     "docs/build/ui-preview/17-espnow.png"
+                 ],
+    "flashed":  false,
+    "sha256":  "4DB8D4530ECA39DE9D17CD7EDE659E115845085597D3CE6EAC848F410C0FB5AD",
+    "bytes":  2132720,
+    "tests":  [
+                  "test_espnow.py",
+                  "test_music_service.py",
+                  "test_live_audio.py",
+                  "test_runtime_contracts.py",
+                  "ui-flow.exe",
+                  "web/test/espnow.mjs"
+              ],
+    "hardwareVerified":  false,
+    "built":  "2026-09-15T19:17:23.0496516+07:00",
+    "firmware":  "D:\\PlatFormIO\\ToFan\\.pio\\build\\esp32-s3-devkitc-1-n16r8v\\firmware.bin"
+}

@@ -5,6 +5,7 @@
 #include "../core/GlobalState.hpp"
 #include <WiFi.h>
 #include "../network/Network.hpp"
+#include "../network/EspNowManager.hpp"
 #include "../food/FoodStore.hpp"
 #include "FoodFont.hpp"
 
@@ -416,7 +417,7 @@ void DisplayManager::drawImageList(bool pushToScreen) { mediaList("Photos & Vide
 int DisplayManager::settingsCount() const {
     switch(settingsPage) {
         case ui::SettingsPage::Root:return 4; case ui::SettingsPage::Display:return 7;
-        case ui::SettingsPage::Network:return 2; case ui::SettingsPage::Sound:return 4;
+        case ui::SettingsPage::Network:return 3; case ui::SettingsPage::Sound:return 4;
         default:return 1;
     }
 }
@@ -427,7 +428,7 @@ void DisplayManager::drawSettings(bool pushToScreen) {
     const char* root[]={"Display","Network","Music & Sound","Voice Assistant"};
     const char* display[]={"Background","Cards & panels","Text","Accent","Secondary text","Selection","Reset palette"};
     const char* sound[]={"Auto-next","Shuffle","Volume step","Volume"};
-    const char* network[]={"Wi-Fi","Admin access point"};
+    const char* network[]={"Wi-Fi","Admin access point","ESP-NOW status"};
     const auto& v=userSettings.values;
     String subtitle="Make it feel like you";
     if(settingsPage==Page::Network) subtitle=networkSettingsBusy()?"Applying network settings...":WiFi.status()==WL_CONNECTED?"Wi-Fi connected":"Wi-Fi disconnected";
@@ -444,7 +445,7 @@ void DisplayManager::drawSettings(bool pushToScreen) {
         const char* label=settingsPage==Page::Root?root[i]:settingsPage==Page::Display?display[i]:
                           settingsPage==Page::Network?network[i]:settingsPage==Page::Sound?sound[i]:"Voice recognition";
         spr.drawString(label,27,y+14,2);
-        bool isToggle=settingsPage==Page::Network || settingsPage==Page::Voice || (settingsPage==Page::Sound && i<2);
+        bool isToggle=(settingsPage==Page::Network && i<2) || settingsPage==Page::Voice || (settingsPage==Page::Sound && i<2);
         if(isToggle) {
             bool enabled=settingsPage==Page::Network?(i==0?v.wifi:v.admin):settingsPage==Page::Voice?v.voice:(i==0?v.autoNext:v.shuffle);
             toggle(tft.width()-69,y+3,enabled);
@@ -812,4 +813,16 @@ void DisplayManager::recorde() {
     spr.setTextColor(active?C_SELECT_TEXT:C_TEXT); spr.drawString(active?"Stop & save":"Record",tft.width()/2,145,2);
     spr.setTextColor(C_MUTED); spr.drawString(getRecordingName(),tft.width()/2,183,1);
     footer("Press to record / stop  /  Back to exit"); present(true);
+}
+
+void DisplayManager::drawEspNow(bool pushToScreen) {
+    if(!spr.getBuffer())return;
+    auto s=espnow::summary();pageHeader("ESP-NOW",s.ready?"Radio ready":s.enabled?"Starting radio...":"Disabled");
+    spr.setTextDatum(TL_DATUM);spr.setTextColor(C_TEXT);
+    spr.drawString(String("Peers online: ")+String(s.online)+" / "+String(s.count),20,62,4);
+    spr.setTextColor(C_MUTED);spr.drawString(String("Wi-Fi channel: ")+String(s.channel),20,101,2);
+    spr.drawString(String("TX ")+String(s.tx)+"    RX "+String(s.rx),20,130,2);
+    spr.drawString(String("Send failures: ")+String(s.failed),20,157,2);
+    spr.drawString("Manage peers on the signed-in web page",20,185,1);
+    footer("Settings > Network   /   Back to return");present(pushToScreen);
 }

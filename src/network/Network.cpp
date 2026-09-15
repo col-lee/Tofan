@@ -1,6 +1,7 @@
 #include "../core/MemoryPolicy.hpp"
 // Manages Wi-Fi, Admin Mode HTTP routes and WebSocket commands.
 #include "Network.hpp"
+#include "EspNowManager.hpp"
 #include "WebPortal.hpp"
 #include "../hardware/DisplayDevice.hpp"
 #include "../ai/AIConversation.hpp"
@@ -394,6 +395,7 @@ void runNet(void* pvParameter) {
     const int desired=requestedNetwork.exchange(-1);
     if (desired >= 0) {
       applyingNetwork.store(true);
+      espnow::beforeWifiChange();
       const bool reconnect = reconnectWifi.exchange(false);
       if (reconnect) WiFi.disconnect(false);
       if (!(desired&2) && isNetwork_install) nm.stopAdminMode();
@@ -409,6 +411,7 @@ void runNet(void* pvParameter) {
        websocket.cleanupClients();
     }
 
-    vTaskDelay(pdMS_TO_TICKS(50));
+    espnow::service();
+    vTaskDelay(pdMS_TO_TICKS(20));
   }
 }

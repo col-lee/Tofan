@@ -1,3 +1,4 @@
+import {mountEspNow} from './espnow.mjs';
 import {mountHistory} from './chat-history.mjs';
 import {mountPersonalities} from './pet-personalities.mjs';
 import {voiceSelect} from './gemini-voices.mjs';
@@ -14,7 +15,7 @@ const $=(s,root=document)=>root.querySelector(s),$$=(s,root=document)=>[...root.
 const escape=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const MiB=1048576,softUploadBytes=256*MiB,uploadReserveBytes=64*1024;
 function storageFree(){const total=Number(status.storageTotal),used=Number(status.storageUsed);return Number.isFinite(total)&&Number.isFinite(used)&&total>=used?total-used:null;}
-const pages={dashboard:['ภาพรวม','พื้นที่ของคุณ จัดวางในแบบที่ชอบ'],foods:['Random foods','Food and drink menu'],files:['ไฟล์และมีเดีย','เตรียมภาพให้พอดีกับจอ ทุกขั้นตอนอยู่ในเบราว์เซอร์ของคุณ'],wifi:['WiFi Manager','เชื่อมต่อและจัดการเครือข่ายของอุปกรณ์'],settings:['การตั้งค่า','สี เสียง และการทำงานที่เป็นคุณ'],ai:['AI conversation','ตั้งค่าบริการสนทนาที่อุปกรณ์ใช้งาน'],ota:['อัปเดตเฟิร์มแวร์','อัปเดตจากไฟล์หรือลิงก์โดยตรง'],account:['บัญชี','จัดการการเข้าถึงอุปกรณ์']};
+const pages={espnow:['ESP-NOW','Peer connections and packets'],dashboard:['ภาพรวม','พื้นที่ของคุณ จัดวางในแบบที่ชอบ'],foods:['Random foods','Food and drink menu'],files:['ไฟล์และมีเดีย','เตรียมภาพให้พอดีกับจอ ทุกขั้นตอนอยู่ในเบราว์เซอร์ของคุณ'],wifi:['WiFi Manager','เชื่อมต่อและจัดการเครือข่ายของอุปกรณ์'],settings:['การตั้งค่า','สี เสียง และการทำงานที่เป็นคุณ'],ai:['AI conversation','ตั้งค่าบริการสนทนาที่อุปกรณ์ใช้งาน'],ota:['อัปเดตเฟิร์มแวร์','อัปเดตจากไฟล์หรือลิงก์โดยตรง'],account:['บัญชี','จัดการการเข้าถึงอุปกรณ์']};
 let token=sessionStorage.getItem('tofan-session')||'',status={},blocks=defaults(),page='',polling=false,worker=null,original=null,processed=null,previewURL='',previewImage=null,xhr=null,videoProcessing=false,videoProcessCancelled=false;
 let stopCardObserver=null,cropUI=null,lastAudioImportState='';
 let panX=0,panY=0,blockKey='tofan-layout',layoutLoaded=false;
@@ -33,7 +34,7 @@ function applyWebTheme(){
  status.settings?.colors?.forEach(([h,s,v],i)=>{s/=100;v/=100;const f=n=>{const k=(n+h/60)%6;return Math.round(255*(v-v*s*Math.max(0,Math.min(k,4-k,1))));};const rgb=[f(5),f(3),f(1)];document.documentElement.style.setProperty(names[i],`rgb(${rgb.join(',')})`);if(i===3)document.documentElement.style.setProperty('--button-text',(rgb[0]*299+rgb[1]*587+rgb[2]*114)>145000?'#243b31':'#ffffff');});
 }
 function saveLayout(){try{localStorage.setItem(blockKey,JSON.stringify(blocks));}catch{notice('เบราว์เซอร์ไม่อนุญาตให้จดจำ layout',true);}}
-function render(){if(!token)return;stopCardObserver?.();stopCardObserver=null;videoProcessCancelled=true;if(worker){worker.terminate();worker=null;}if(previewURL){URL.revokeObjectURL(previewURL);previewURL='';}previewImage?.close?.();original=processed=previewImage=null;page=location.hash.slice(1);if(!pages[page])page='dashboard';$('nav').innerHTML=Object.entries(pages).map(([id,[name]])=>`<a href="#${id}" class="${page===id?'active':''}" ${page===id?'aria-current="page"':''}>${name}</a>`).join('');$('#pageTitle').textContent=pages[page][0];$('#subtitle').textContent=pages[page][1];notice('');({dashboard,files,wifi,settings,ai,ota,account,foods}[page])();enhanceControls();}
+function render(){if(!token)return;stopCardObserver?.();stopCardObserver=null;videoProcessCancelled=true;if(worker){worker.terminate();worker=null;}if(previewURL){URL.revokeObjectURL(previewURL);previewURL='';}previewImage?.close?.();original=processed=previewImage=null;page=location.hash.slice(1);if(!pages[page])page='dashboard';$('nav').innerHTML=Object.entries(pages).map(([id,[name]])=>`<a href="#${id}" class="${page===id?'active':''}" ${page===id?'aria-current="page"':''}>${name}</a>`).join('');$('#pageTitle').textContent=pages[page][0];$('#subtitle').textContent=pages[page][1];notice('');({espnow,dashboard,files,wifi,settings,ai,ota,account,foods}[page])();enhanceControls();}
 window.addEventListener('hashchange',render);
 const metric=(value,sub)=>`<div class="metric">${escape(value)}</div><small>${escape(sub)}</small>`;
 function widgetValue(id){return widgetContent(id,status);}
@@ -171,3 +172,5 @@ mobileMenu();
 startIcons();
 
 function foods(){mountFoods({root:$("#content"),api,ask,requestName,notice,enhanceControls,escape});}
+
+function espnow(){const root=document.createElement("div");$("#content").replaceChildren(root);mountEspNow({root,api,ask,notice});}

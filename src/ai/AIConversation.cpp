@@ -192,7 +192,11 @@ String AIConversation::getStatusJson() const {
     document["txAudioChunks"] = liveTxAudioChunks.load();
     document["rxAudioChunks"] = liveRxAudioChunks.load();
     document["droppedAudioChunks"] = liveDroppedAudioChunks.load();
-    document["speakerBufferedBytes"] = livePcmBufferedBytes();
+    const size_t speakerBytes = livePcmBufferedBytes();
+    document["speakerBufferedBytes"] = speakerBytes;
+    document["speakerBufferedMs"] = static_cast<uint32_t>((speakerBytes * 1000ULL) / 48000ULL);
+    document["speakerBuffering"] = livePcmIsBuffering();
+    document["speakerUnderruns"] = getLivePcmUnderruns();
     String output;
     serializeJson(document, output);
     return output;
@@ -732,11 +736,13 @@ void AIConversation::handleLiveServerMessage(uint8_t* payload, size_t length) {
     if (serverContent["generationComplete"] | false) {
         liveLastModelEventMs = millis();
         liveGenerationComplete.store(true);
-        Serial.println("[GEMINI] Generation complete; draining speaker buffer");
+        finishLivePcmInput();
+        Serial.println("[GEMINI] Generation complete; draining speaker jitter buffer");
     }
 
     if (serverContent["turnComplete"] | false) {
         chatHistory.finish();
+        finishLivePcmInput(); // also covers servers that omit generationComplete
         liveModelTurnActive.store(false);
         liveGenerationComplete.store(false);
         // Keep the microphone gated briefly after the final queued samples drain

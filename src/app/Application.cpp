@@ -1,5 +1,6 @@
 // Initializes devices and background tasks, then dispatches application updates.
 #include "Application.hpp"
+#include "../network/EspNowManager.hpp"
 #include "../core/MemoryPolicy.hpp"
 #include "../network/WebPortal.hpp"
 #include "../core/UserSettings.hpp"
@@ -46,6 +47,7 @@ static void initializeSystem() {
     ioManager.initPins();
     file_card.initSDCard();
     chatHistory.begin();
+    espnow::begin();
     vTaskDelay(pdMS_TO_TICKS(200));
 
     initAudio();

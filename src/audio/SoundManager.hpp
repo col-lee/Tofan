@@ -65,8 +65,11 @@ bool startLivePcmOutput();
 void stopLivePcmOutput();
 void clearLivePcmOutput();
 bool queueLivePcmAudio(const uint8_t* data, size_t length, TickType_t timeout = 0);
+void finishLivePcmInput();
 bool livePcmHasBufferedAudio();
+bool livePcmIsBuffering();
 size_t livePcmBufferedBytes();
+uint32_t getLivePcmUnderruns();
 float getMicrophoneVoiceLevel();
 float getLiveSpeechLevel();
 
@@ -80,3 +83,6 @@ void audio_showstation(const char *info);
 void audio_showstreamtitle(const char *info);
 
 #endif
+
+uint32_t getMusicSdWaits();
+uint32_t getMusicMaxServiceGapMs();

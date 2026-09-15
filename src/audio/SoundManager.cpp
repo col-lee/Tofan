@@ -14,6 +14,14 @@
 #include "ToFan-project-1_inferencing.h"
 
 Audio audio;
+static std::atomic<uint32_t> musicSdWaits{0},musicMaxServiceGap{0};
+static uint32_t musicLastService=0;
+uint32_t getMusicSdWaits(){return musicSdWaits.load();}
+uint32_t getMusicMaxServiceGapMs(){return musicMaxServiceGap.load();}
+static void serviceMusic(){
+    uint32_t now=millis();if(musicLastService){uint32_t gap=now-musicLastService;if(gap>musicMaxServiceGap.load())musicMaxServiceGap=gap;}musicLastService=now;
+    audio.loop();
+}
 static VoiceEnvelope microphoneEnvelope, liveSpeechEnvelope;
 float getMicrophoneVoiceLevel() { return microphoneEnvelope.level(millis()); }
 float getLiveSpeechLevel() { return liveSpeechEnvelope.level(millis()); }
@@ -163,8 +171,20 @@ static QueueHandle_t livePcmReadyQueue = nullptr;
 static QueueHandle_t livePcmFreeQueue = nullptr;
 static std::atomic<bool> livePcmEnabled{false};
 static std::atomic<bool> livePcmSpeaking{false};
+static std::atomic<bool> livePcmInputComplete{true};
+static std::atomic<bool> livePcmBuffering{false};
 static std::atomic<size_t> livePcmQueuedBytes{0};
 static std::atomic<uint32_t> livePcmEpoch{0};
+static std::atomic<uint32_t> livePcmFirstQueuedAtMs{0};
+static std::atomic<uint32_t> livePcmUnderruns{0};
+
+// Gemini output is 24 kHz mono PCM16 => 48,000 bytes/sec.  The API delivers
+// output in network chunks, not at perfectly periodic intervals.  Starting I2S
+// on the first chunk makes even a short Wi-Fi/TLS scheduling gap audible.  Hold
+// roughly one third of a second before playback so the large PSRAM queue acts as
+// a real jitter buffer rather than just unused capacity.
+static constexpr size_t LIVE_PCM_PREBUFFER_BYTES = 16 * 1024; // ~341 ms @ 24 kHz PCM16
+static constexpr uint32_t LIVE_PCM_MAX_PREBUFFER_MS = 650;    // never wait forever on a tiny/stalled turn
 
 static void subtractLivePcmQueuedBytes(size_t amount) {
     size_t current = livePcmQueuedBytes.load();
@@ -246,12 +266,19 @@ static void resetLivePcmQueues() {
     for (uint16_t slot = 0; slot < LIVE_PCM_BLOCK_COUNT; ++slot) xQueueSend(livePcmFreeQueue, &slot, 0);
     livePcmQueuedBytes.store(0);
     livePcmSpeaking.store(false);
+    livePcmInputComplete.store(true);
+    livePcmBuffering.store(false);
+    livePcmFirstQueuedAtMs.store(0);
+    livePcmUnderruns.store(0);
 }
 
 static void releaseLivePcmStorage() {
     livePcmEnabled.store(false);
     livePcmSpeaking.store(false);
+    livePcmInputComplete.store(true);
+    livePcmBuffering.store(false);
     livePcmQueuedBytes.store(0);
+    livePcmFirstQueuedAtMs.store(0);
     if (livePcmReadyQueue) { vQueueDelete(livePcmReadyQueue); livePcmReadyQueue = nullptr; }
     if (livePcmFreeQueue) { vQueueDelete(livePcmFreeQueue); livePcmFreeQueue = nullptr; }
     if (livePcmBlocks) { heap_caps_free(livePcmBlocks); livePcmBlocks = nullptr; }
@@ -660,6 +687,9 @@ bool readLiveMicrophoneFrame(int16_t* output, size_t capacitySamples, size_t& sa
 bool startLivePcmOutput() {
     if (!ensureLivePcmStorage()) return false;
     clearLivePcmOutput();
+    livePcmInputComplete.store(true);
+    livePcmBuffering.store(false);
+    livePcmUnderruns.store(0);
     livePcmEnabled.store(true);
     return true;
 }
@@ -668,6 +698,9 @@ void clearLivePcmOutput() {
     liveSpeechEnvelope.reset();
     if (!livePcmReadyQueue || !livePcmFreeQueue || !livePcmBlocks) return;
     livePcmEpoch.fetch_add(1);
+    livePcmInputComplete.store(true);
+    livePcmBuffering.store(false);
+    livePcmFirstQueuedAtMs.store(0);
     uint16_t slot = 0;
     while (xQueueReceive(livePcmReadyQueue, &slot, 0) == pdPASS) {
         subtractLivePcmQueuedBytes(livePcmBlocks[slot].length);
@@ -684,6 +717,9 @@ void stopLivePcmOutput() {
 
 bool queueLivePcmAudio(const uint8_t* data, size_t length, TickType_t timeout) {
     if (!data || !length || !livePcmEnabled.load() || !ensureLivePcmStorage()) return false;
+    // Receiving any PCM means the current model response is still producing
+    // audio. generationComplete/turnComplete will mark the producer finished.
+    livePcmInputComplete.store(false);
     // PCM16 must remain sample aligned.
     length &= ~static_cast<size_t>(1);
     size_t offset = 0;
@@ -698,7 +734,8 @@ bool queueLivePcmAudio(const uint8_t* data, size_t length, TickType_t timeout) {
         const size_t publishedLength = block.length;
         // Account BEFORE publishing: the other core may consume/recycle this
         // slot immediately inside xQueueSend, before this task runs again.
-        livePcmQueuedBytes.fetch_add(publishedLength);
+        const size_t previousQueued = livePcmQueuedBytes.fetch_add(publishedLength);
+        if (previousQueued == 0) livePcmFirstQueuedAtMs.store(millis());
         if (xQueueSend(livePcmReadyQueue, &slot, timeout) != pdPASS) {
             subtractLivePcmQueuedBytes(publishedLength);
             xQueueSend(livePcmFreeQueue, &slot, 0);
@@ -708,6 +745,13 @@ bool queueLivePcmAudio(const uint8_t* data, size_t length, TickType_t timeout) {
     }
     return true;
 }
+
+void finishLivePcmInput() {
+    livePcmInputComplete.store(true);
+}
+
+bool livePcmIsBuffering() { return livePcmBuffering.load(); }
+uint32_t getLivePcmUnderruns() { return livePcmUnderruns.load(); }
 
 bool livePcmHasBufferedAudio() {
     return livePcmSpeaking.load() || livePcmQueuedBytes.load() > 0;
@@ -730,6 +774,7 @@ void handleAudio(void *parameter) {
   unsigned long lastWsUpdate = 0;
   bool currentTrackIsVideoAudio = false;
   bool liveOutputConfigured = false;
+  bool livePlaybackPrimed = false;
   uint32_t liveStereoScratch[512];
 
   for(;;) {
@@ -747,6 +792,34 @@ void handleAudio(void *parameter) {
         i2s_set_sample_rates(static_cast<i2s_port_t>(audio.getI2sPort()), 24000);
         liveOutputConfigured = true;
         Serial.println("[GEMINI] Speaker switched to 24 kHz live PCM");
+      }
+
+      const size_t queuedBytes = livePcmQueuedBytes.load();
+      const bool producerFinished = livePcmInputComplete.load();
+      if (!livePlaybackPrimed) {
+        if (queuedBytes == 0) {
+          livePcmBuffering.store(false);
+          livePcmSpeaking.store(false);
+          isPlayingAudio = false;
+          vTaskDelay(pdMS_TO_TICKS(1));
+          continue;
+        }
+        const uint32_t firstQueuedAt = livePcmFirstQueuedAtMs.load();
+        const bool waitedLongEnough = firstQueuedAt != 0 &&
+            static_cast<uint32_t>(millis() - firstQueuedAt) >= LIVE_PCM_MAX_PREBUFFER_MS;
+        if (!producerFinished && queuedBytes < LIVE_PCM_PREBUFFER_BYTES && !waitedLongEnough) {
+          livePcmBuffering.store(true);
+          livePcmSpeaking.store(false);
+          isPlayingAudio = false;
+          vTaskDelay(pdMS_TO_TICKS(2));
+          continue;
+        }
+        livePlaybackPrimed = true;
+        livePcmBuffering.store(false);
+        Serial.printf("[GEMINI] PCM jitter buffer ready | queued=%u bytes (~%u ms) | source=%s\n",
+                      static_cast<unsigned>(queuedBytes),
+                      static_cast<unsigned>((queuedBytes * 1000UL) / 48000UL),
+                      producerFinished ? "complete" : "streaming");
       }
 
       uint16_t liveSlot = 0;
@@ -786,8 +859,8 @@ void handleAudio(void *parameter) {
               stalledWrites = 0;
               continue;
             }
-            if (++stalledWrites >= 3) {
-              Serial.printf("[GEMINI] I2S write stalled/failed (err=%d); dropping %u samples from current block\n",
+            if (++stalledWrites >= 10) {
+              Serial.printf("[GEMINI] I2S write stalled/failed after retries (err=%d); dropping %u samples from current block\n",
                             static_cast<int>(writeResult),
                             static_cast<unsigned>(batch - batchDone));
               break;
@@ -802,11 +875,32 @@ void handleAudio(void *parameter) {
       } else {
         livePcmSpeaking.store(false);
         isPlayingAudio = false;
+        // If Gemini is still producing audio, an empty queue is a network jitter
+        // underrun. Re-prime before resuming instead of emitting many tiny
+        // play/silence gaps. When generation is complete, simply finish draining.
+        if (!livePcmInputComplete.load()) {
+          livePlaybackPrimed = false;
+          livePcmBuffering.store(true);
+          livePcmFirstQueuedAtMs.store(0);
+          const uint32_t underruns = livePcmUnderruns.fetch_add(1) + 1;
+          // Avoid making a poor connection worse by flooding the 115200-baud
+          // Serial port on every underrun. The counter remains available in
+          // /api/ai/status; log only the first few and then every tenth event.
+          if (underruns <= 3 || (underruns % 10) == 0) {
+            Serial.printf("[GEMINI] PCM underrun #%u; rebuffering before resume\n",
+                          static_cast<unsigned>(underruns));
+          }
+        } else {
+          livePlaybackPrimed = false;
+          livePcmBuffering.store(false);
+          livePcmFirstQueuedAtMs.store(0);
+        }
         vTaskDelay(pdMS_TO_TICKS(1));
       }
       continue;
     } else if (liveOutputConfigured) {
       liveOutputConfigured = false;
+      livePlaybackPrimed = false;
       livePcmSpeaking.store(false);
       isPlayingAudio = false;
       Serial.println("[GEMINI] Live PCM speaker released");
@@ -820,6 +914,7 @@ void handleAudio(void *parameter) {
         switch (cmd.audio_state) {
           case AUDIO_COMMAND::AUDIO_STATE::PLAY: {
             bool connected = false;
+            musicLastService=0;musicSdWaits=0;musicMaxServiceGap=0;
             if(requestedPath != "" && requestedPath != "null") {
               currentFilePath = requestedPath;
               currentAudioProgress = 0;
@@ -905,12 +1000,13 @@ void handleAudio(void *parameter) {
       }
     }
 
+    if(currentState!=STATE_PLAYING)musicLastService=0;
     if (isConnectSDcard && !isOnlineAudio) {
       if (currentState == STATE_PLAYING) {
         if(xSemaphoreTake(sdSemaphore, pdMS_TO_TICKS(5)) == pdTRUE) {
-            audio.loop();
+            serviceMusic();
             xSemaphoreGive(sdSemaphore);
-        }
+        } else { ++musicSdWaits; }
       }
 
       if (currentState == STATE_PLAYING && (millis() - lastProgressUpdate >= 1000)) {
@@ -924,7 +1020,7 @@ void handleAudio(void *parameter) {
         }
     } else {
       if(currentState == STATE_PLAYING) {
-        audio.loop();
+        serviceMusic();
       }
     }
 

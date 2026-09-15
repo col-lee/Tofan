@@ -36,6 +36,7 @@ void drawCurrent() {
         case UI_STATE::POPUP_NO_MUSIC: DISM.drawPopupNoMusic(); break;
         case UI_STATE::APP_PET: DISM.drawAIPet(); break;
         case UI_STATE::APP_FOODS: DISM.drawFoods(); break;
+        case UI_STATE::APP_ESPNOW: DISM.drawEspNow(); break;
         case UI_STATE::RECORDE: DISM.recorde(); break;
         case UI_STATE::DEBUG: DISM.debug(); break;
         default: break;
@@ -108,6 +109,7 @@ void settingClick() {
             if(i==6) { preferences::Values defaults; for(int j=0;j<6;++j) v.colors[j]=defaults.colors[j]; DISM.applyTheme(); }
             break;
         case Page::Network:
+            if(i==2) { enter(UI_STATE::APP_ESPNOW);return; }
             if(i==0) v.wifi=!v.wifi; else v.admin=!v.admin;
             applyNetwork(); break;
         case Page::Sound:
@@ -148,7 +150,7 @@ void InputController::update() {
         lastRefresh=millis();
         switch(DISM.currentState) {
             case UI_STATE::APP_MUSIC: case UI_STATE::APP_ONLINE_MUSIC:
-            case UI_STATE::APP_SETTINGS: case UI_STATE::DEBUG: case UI_STATE::RECORDE: drawCurrent(); break;
+            case UI_STATE::APP_ESPNOW: case UI_STATE::APP_SETTINGS: case UI_STATE::DEBUG: case UI_STATE::RECORDE: drawCurrent(); break;
             case UI_STATE::APP_FOODS: configureEncoder();drawCurrent();break;
             default:break;
         }
@@ -223,7 +225,8 @@ void InputController::handleInput() {
             } else if(i==2) nextTrack();
             else if(i==3) { DISM.loadMusicList();enter(UI_STATE::APP_MUSIC_LIST); }
             else { DISM.currentMusicControlIndex=1;enter(UI_STATE::APP_ONLINE_MUSIC); }
-        } else if(DISM.currentState==UI_STATE::APP_MUSIC_LIST) {
+        } else if(DISM.currentState==UI_STATE::APP_ESPNOW) enter(UI_STATE::APP_SETTINGS);
+            else if(DISM.currentState==UI_STATE::APP_MUSIC_LIST) {
             playTrack(DISM.playlistSelectedIndex);DISM.currentMusicControlIndex=1;enter(UI_STATE::APP_MUSIC);
         } else if(DISM.currentState==UI_STATE::APP_ONLINE_MUSIC) {
             int i=DISM.currentMusicControlIndex;
@@ -275,7 +278,8 @@ void InputController::handleInput() {
             } else if(DISM.currentState==UI_STATE::APP_SETTINGS && DISM.settingsPage!=Page::Root) {
                 const int parent=static_cast<int>(DISM.settingsPage)-1;
                 settingsPage(Page::Root);DISM.settingSelectedIndex=parent;configureEncoder();drawCurrent();
-            } else if(DISM.currentState==UI_STATE::APP_MUSIC_LIST) enter(UI_STATE::APP_MUSIC);
+            } else if(DISM.currentState==UI_STATE::APP_ESPNOW) enter(UI_STATE::APP_SETTINGS);
+            else if(DISM.currentState==UI_STATE::APP_MUSIC_LIST) enter(UI_STATE::APP_MUSIC);
             else if(DISM.currentState==UI_STATE::GLOBAL_VOLUME) finishVolume();
             else {
                 if(DISM.currentState==UI_STATE::APP_PET) appCoordinator.stopAiPetListening();

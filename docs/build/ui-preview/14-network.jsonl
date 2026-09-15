@@ -9,4 +9,7 @@
 {"op":"text","a":[27,100,2,3,8583],"text":"Admin access point"}
 {"op":"round","a":[251,89,42,22,11,27567]}
 {"op":"ellipse","a":[254,92,16,16,63454]}
+{"op":"round","a":[16,118,288,29,8,57244]}
+{"op":"text","a":[27,132,2,3,8583],"text":"ESP-NOW status"}
+{"op":"text","a":[292,132,2,5,8583],"text":">"}
 {"op":"text","a":[160,230,1,4,27567],"text":"Turn to select  /  Press to change  /  Back"}

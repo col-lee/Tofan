@@ -35,8 +35,10 @@ Block* livePcmBlocks=storage;
 struct Queue{std::deque<uint16_t> slots;} ready,freeSlots;
 Queue *livePcmReadyQueue=&ready,*livePcmFreeQueue=&freeSlots;
 std::atomic<bool> livePcmEnabled{true},livePcmSpeaking{false};
+std::atomic<bool> livePcmInputComplete{true},livePcmBuffering{false};
 std::atomic<size_t> livePcmQueuedBytes{0};
-std::atomic<uint32_t> livePcmEpoch{0};
+std::atomic<uint32_t> livePcmEpoch{0},livePcmFirstQueuedAtMs{0};
+uint32_t fakeMillis=123; uint32_t millis(){return fakeMillis;}
 bool immediateConsumer=false,failPublish=false;
 struct{void println(const char*){}} Serial;
 Queue micReady,micFree;

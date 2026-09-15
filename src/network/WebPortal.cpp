@@ -1,5 +1,6 @@
 #include "../core/MemoryPolicy.hpp"
 #include "WebPortal.hpp"
+#include "EspNowManager.hpp"
 #include "WebPolicy.hpp"
 #include "PortalAssets.hpp"
 #include "Network.hpp"
@@ -104,7 +105,7 @@ void dispose(Upload* u) {
     if(u->owned){transfer=false;if(u->ota)updating=false;} delete u;
 }
 bool writeUploadChunkCooperative(File& file,const uint8_t* data,size_t length) {
-    constexpr size_t sliceBytes = 16 * 1024;
+    constexpr size_t sliceBytes = 4 * 1024;
     size_t offset = 0;
     while (offset < length) {
         const size_t slice = std::min(sliceBytes, length - offset);
@@ -181,7 +182,7 @@ void uploadComplete(AsyncWebServerRequest* r) {
 struct AudioImportJob { String url; String name; };
 
 bool writeImportChunk(File& file,const uint8_t* data,size_t length,String& error) {
-    constexpr size_t sliceBytes = 16 * 1024;
+    constexpr size_t sliceBytes = 4 * 1024;
     size_t offset=0;
     while(offset<length) {
         const size_t slice=std::min(sliceBytes,length-offset);
@@ -387,6 +388,9 @@ void registerWebPortal(AsyncWebServer& server) {
         JsonDocument d(memory::jsonAllocator());d["ssid"]=ssid;d["password"]=pass;String out;serializeJson(d,out);enqueue(r,Command::Wifi,out);
     });
     server.on("/api/ai",AsyncWebRequestMethod::HTTP_POST,[](AsyncWebServerRequest* r){if(authorized(r,true))enqueue(r,Command::AI,param(r,"values"));});
+    server.on("/api/espnow",AsyncWebRequestMethod::HTTP_GET,[](AsyncWebServerRequest* r){if(!authorized(r))return;auto* response=r->beginResponse(200,"application/json",espnow::status());response->addHeader("Cache-Control","no-store");r->send(response);});
+    server.on("/api/espnow",AsyncWebRequestMethod::HTTP_POST,[](AsyncWebServerRequest* r){if(!authorized(r,true))return;if(webFirmwareUpdating()){reply(r,409,"Firmware update in progress");return;}if(!espnow::submitConfig(param(r,"values"))){reply(r,409,"Configuration too large or queue full");return;}reply(r,202,"ESP-NOW settings queued",true);});
+    server.on("/api/espnow/send",AsyncWebRequestMethod::HTTP_POST,[](AsyncWebServerRequest* r){if(!authorized(r,true))return;if(webFirmwareUpdating()){reply(r,409,"Firmware update in progress");return;}uint8_t mac[6],payload[espnow::MaxPayload];String hex=param(r,"hex");if(!espnow::mac(param(r,"mac").c_str(),mac)||hex.length()%2||hex.length()>espnow::MaxPayload*2){reply(r,400,"Invalid MAC or payload (max 200 bytes)");return;}for(size_t i=0;i<hex.length();i+=2){int a=espnow::hex(hex[i]),b=espnow::hex(hex[i+1]);if(a<0||b<0){reply(r,400,"Payload must be hexadecimal");return;}payload[i/2]=(a<<4)|b;}if(!espnow::sendPacket(mac,payload,hex.length()/2)){reply(r,409,"Send queue full");return;}reply(r,202,"Packet queued; check TX/RX status",true);});
     server.on("/api/history",AsyncWebRequestMethod::HTTP_GET,[](AsyncWebServerRequest* r){
         if(!authorized(r))return;String before=param(r,"before",false);
         for(size_t i=0;i<before.length();++i)if(before[i]<'0'||before[i]>'9'){reply(r,400,"Invalid history cursor");return;}
@@ -424,7 +428,7 @@ void registerWebPortal(AsyncWebServer& server) {
         {Guard g(sdSemaphore);if(!g.held||!isConnectSDcard){transfer=false;reply(r,503,"SD unavailable");return;}
             opened=SD.open(path,FILE_READ);if(!opened){transfer=false;reply(r,404,"File not found");return;}}
         auto f=std::shared_ptr<File>(new File(opened),[](File* file){Guard g(sdSemaphore);file->close();delete file;transfer=false;});
-        auto* response=r->beginResponse("application/octet-stream",f->size(),[f](uint8_t* buffer,size_t maxLen,size_t index)->size_t {Guard guard(sdSemaphore);if(!guard.held)return RESPONSE_TRY_AGAIN;f->seek(index);return f->read(buffer,maxLen);});
+        auto* response=r->beginResponse("application/octet-stream",f->size(),[f](uint8_t* buffer,size_t maxLen,size_t index)->size_t {Guard guard(sdSemaphore);if(!guard.held)return RESPONSE_TRY_AGAIN;f->seek(index);return f->read(buffer,std::min(maxLen,size_t(4096)));});
         response->addHeader("Cache-Control","no-store");r->send(response);
     });
     server.on("/api/file",AsyncWebRequestMethod::HTTP_POST,[](AsyncWebServerRequest* r){if(!authorized(r,true))return;String path=pathFor(r,true),action=param(r,"action");
@@ -507,7 +511,15 @@ void serviceWebPortal() {
     static uint32_t last=0;if(millis()-last<1000)return;last=millis();
     JsonDocument d(memory::jsonAllocator());d["device"]=String(static_cast<uint32_t>(ESP.getEfuseMac()),HEX);d["uptime"]=millis()/1000;d["heap"]=ESP.getFreeHeap();d["psram"]=ESP.getFreePsram();d["heapMin"]=ESP.getMinFreeHeap();d["heapLargest"]=ESP.getMaxAllocHeap();d["tlsPsram"]=memory::tlsUsesPsram();d["firmware"]=__DATE__ " " __TIME__;d["slotSize"]=slotSize();d["width"]=tft.width();d["height"]=tft.height();
     d["connected"]=WiFi.status()==WL_CONNECTED;d["ssid"]=WiFi.SSID();d["ip"]=WiFi.localIP().toString();d["apIP"]=WiFi.softAPIP().toString();d["rssi"]=WiFi.RSSI();d["networkBusy"]=networkSettingsBusy();
-    d["sd"]=isConnectSDcard;{Guard g(sdSemaphore);if(g.held && isConnectSDcard){d["storageTotal"]=SD.totalBytes();d["storageUsed"]=SD.usedBytes();}}
+    // FAT free-space queries can be slow. Never block the music reader for a
+    // dashboard refresh; serve cached capacity while audio/recording is active.
+    static uint64_t storageTotal=0,storageUsed=0;static uint32_t storageChecked=0;
+    if(!isConnectSDcard){storageTotal=storageUsed=0;storageChecked=0;}
+    else if(!isPlayingAudio&&!app::runtime.isRecordingMode&&(!storageChecked||millis()-storageChecked>30000)){
+        Guard g(sdSemaphore);if(g.held){storageTotal=SD.totalBytes();storageUsed=SD.usedBytes();storageChecked=millis();}
+    }
+    d["sd"]=isConnectSDcard;if(storageChecked){d["storageTotal"]=storageTotal;d["storageUsed"]=storageUsed;}d["storageCached"]=true;d["storageKnown"]=storageChecked!=0;
+    d["musicSdWaits"]=getMusicSdWaits();d["musicMaxServiceGapMs"]=getMusicMaxServiceGapMs();
     d["playing"]=isPlayingAudio;d["title"]=currentSongTitle;d["current"]=currentAudioTime;d["duration"]=totalAudioDuration;d["recording"]=app::runtime.isRecording;d["busy"]=transfer.load();
     {Guard g(portalMutex);if(g.held){d["audioImportState"]=audioImportState;d["audioImportError"]=audioImportError;d["audioImportDone"]=audioImportDone;d["audioImportTotal"]=audioImportTotal;}}
     auto custom=d["customPet"].to<JsonObject>();const auto& cp=userSettings.customPet;

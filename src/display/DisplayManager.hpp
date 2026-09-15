@@ -48,7 +48,8 @@ enum class State {
     APP_PET,
     DEBUG,
     RECORDE,
-    APP_FOODS
+    APP_FOODS,
+    APP_ESPNOW
 };
 
 } // namespace ui
@@ -166,6 +167,7 @@ public:
 
     void drawAIPet(bool pushToScreen = true);
     void drawFoods(bool pushToScreen = true);
+    void drawEspNow(bool pushToScreen = true);
     void setPetMood(ui::PetMood mood, const char* message = nullptr, unsigned long holdMs = 0);
     bool isPetMoodHeld() const;
     void setPetVoiceLevel(float level);

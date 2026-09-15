@@ -25,6 +25,10 @@ checks = {
     "WebSocket TCP frame timeout is raised above 5 seconds": '-DWEBSOCKETS_TCP_TIMEOUT=30000' in (ROOT / "platformio.ini").read_text(encoding="utf-8"),
     "Gemini TX JSON/base64 scratch lives off task stack": 'liveTxScratchBuffer' in ai and 'ensureLiveTxScratchCapacity' in ai,
     "Gemini TX scratch is released with session": 'releaseLiveTxScratchBuffer();' in ai,
+    "Gemini speaker uses a startup jitter prebuffer": 'LIVE_PCM_PREBUFFER_BYTES' in audio and 'PCM jitter buffer ready' in audio,
+    "Gemini speaker detects queue underruns and re-buffers": 'PCM underrun #' in audio and 'livePlaybackPrimed = false' in audio,
+    "Gemini generation completion releases short replies from prebuffer": 'finishLivePcmInput();' in ai and 'generationComplete' in ai,
+    "Gemini speaker exposes buffering and underrun diagnostics": 'speakerBuffering' in ai and 'speakerUnderruns' in ai and 'speakerBufferedMs' in ai,
 }
 
 failed = [name for name, ok in checks.items() if not ok]

@@ -10,7 +10,7 @@ source = (root / 'src/display/DisplayManager.cpp').read_text(encoding='utf-8')
 names = ['applyTheme','present','pageHeader','footer','toggle','drawLoading','drawHomeMenu',
          'drawMusicPlayer','drawMusicSurface','drawPopupNoMusic','drawOnlineMusicPlayer',
          'drawVolumeOverlay','mediaList','drawMusicList','drawImageList','settingsCount',
-         'drawSettings','drawColorPicker','drawAIPet','debug','recorde']
+         'drawSettings','drawEspNow','drawColorPicker','drawAIPet','debug','recorde']
 functions = []
 for name in names:
     start = re.search(r'(?:void|int) DisplayManager::' + name + r'\(', source).start()
@@ -54,6 +54,7 @@ int main(){
     ui.settingsPage=ui::SettingsPage::Network;ui.drawSettings();spr.save("14-network");
     ui.drawPopupNoMusic();spr.save("15-connect");
     ui.drawOnlineMusicPlayer();spr.save("16-online");
+    ui.drawEspNow();spr.save("17-espnow");
 }
 '''
 (root / '.pio/ui-preview.cpp').write_text('#include "../test/support/UiPreview.hpp"\n' + header + '\n' + '\n'.join(functions) + main, encoding='utf-8')

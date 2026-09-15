@@ -105,6 +105,7 @@ int main(){
     assert(userSettings.values.colors[3].saturation==35 && userSettings.values.colors[3].value==92);
     int saved=saveCount;press();turn(20);back();
     assert(userSettings.values.colors[3].hue==250 && saveCount==saved);
+    back();turn(1);press();turn(2);press();assert(DISM.currentState==UI_STATE::APP_ESPNOW);back();assert(DISM.currentState==UI_STATE::APP_SETTINGS && DISM.settingsPage==Page::Network);
     back();turn(2);press();assert(DISM.settingsPage==Page::Sound);
     turn(1);press();assert(userSettings.values.shuffle==1);
     turn(0);press();assert(userSettings.values.autoNext==0);

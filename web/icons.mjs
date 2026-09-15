@@ -1,5 +1,5 @@
 // Font Awesome Free, served from the device. Labels remain text, never HTML.
-const pages={foods:'utensils',dashboard:'gauge-high',files:'images',wifi:'wifi',settings:'sliders',ai:'robot',ota:'microchip',account:'user-gear'};
+const pages={espnow:'tower-broadcast',foods:'utensils',dashboard:'gauge-high',files:'images',wifi:'wifi',settings:'sliders',ai:'robot',ota:'microchip',account:'user-gear'};
 const widgets={network:'wifi',storage:'hard-drive',music:'music',volume:'volume-high',voice:'microphone',system:'memory'};
 const buttons={foodDraw:'shuffle',mobileMenu:'bars',logout:'arrow-right-from-bracket',accountLogout:'arrow-right-from-bracket',addBlock:'plus',resetLayout:'rotate-left',refreshFiles:'rotate-right',screenSize:'display',resetCrop:'crop-simple',process:'wand-magic-sparkles',processVideo:'film',cancelProcess:'xmark',cancelVideoProcess:'xmark',cancelUpload:'xmark',uploadPrepared:'file-arrow-up',uploadOriginal:'upload',downloadPrepared:'download',saveColors:'palette'};
 const actions={up:'arrow-up',down:'arrow-down',remove:'xmark',preview:'eye',download:'download',rename:'pen-to-square',delete:'trash'};
