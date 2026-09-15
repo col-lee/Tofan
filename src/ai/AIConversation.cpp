@@ -734,6 +734,9 @@ void AIConversation::handleLiveServerMessage(uint8_t* payload, size_t length) {
     }
 
     if (serverContent["generationComplete"] | false) {
+        // Output transcription is complete here; turnComplete may be delayed
+        // until playback ends. The later finish only commits additional text.
+        chatHistory.finish();
         liveLastModelEventMs = millis();
         liveGenerationComplete.store(true);
         finishLivePcmInput();

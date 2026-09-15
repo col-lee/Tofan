@@ -14,7 +14,7 @@ stub=r'''
 class String:public std::string {public:using std::string::string;String()=default;String(const std::string& s):std::string(s){}size_t write(uint8_t c){push_back(c);return 1;}size_t write(const uint8_t* p,size_t n){append((const char*)p,n);return n;}};
 uint32_t now=1000;uint32_t millis(){return now;}
 using SemaphoreHandle_t=void*;void* xSemaphoreCreateMutex(){return (void*)1;}int pdMS_TO_TICKS(int n){return n;}constexpr int pdTRUE=1;
-int xSemaphoreTake(void*,int){return 1;}void xSemaphoreGive(void*){}SemaphoreHandle_t sdSemaphore=(void*)1;bool isConnectSDcard=true;
+bool historyLocked=false;int xSemaphoreTake(void*,int){return !historyLocked;}void xSemaphoreGive(void*){}SemaphoreHandle_t sdSemaphore=(void*)1;bool isConnectSDcard=true;
 struct Queue {std::deque<void*> values;size_t capacity;};using QueueHandle_t=Queue*;
 QueueHandle_t xQueueCreate(size_t n,size_t){return new Queue{{},n};}
 int xQueueSend(Queue* q,void* p,int){if(q->values.size()==q->capacity)return 0;q->values.push_back(*(void**)p);return 1;}
@@ -29,7 +29,18 @@ struct SDMock {bool exists(const char* p){return disk.count(p)||dirs.count(p);}b
 '''
 strip=lambda s:re.sub(r'^#(?:pragma once|include ["<](?:Arduino.h|freertos/[^>]*|ChatHistory.hpp|../core/MemoryPolicy.hpp|../core/SharedResources.hpp|SD.h|esp_heap_caps.h)[">]).*$', '',s,flags=re.M)
 stub+='\n#include <ArduinoJson.h>\nnamespace memory {ArduinoJson::Allocator* jsonAllocator(){return ArduinoJson::detail::DefaultAllocator::instance();}void* zeroAllocate(size_t n,size_t s){return calloc(n,s);}}\n'
-source=stub+strip((root/'src/ai/ChatHistory.hpp').read_text())+strip((root/'src/ai/ChatHistory.cpp').read_text())+r'''
+ai=(root/'src/ai/AIConversation.cpp').read_text(encoding='utf8')
+start=ai.index('    if (serverContent["generationComplete"] | false) {')
+boundary=ai[start:ai.index('\n}\n',start)]
+transcripts=ai[ai.index('    chatHistory.transcript(false,serverContent'):ai.index('    if (serverContent["interrupted"]')]
+boundarySupport=r"""
+struct {void println(const char*){}} Serial;
+uint32_t liveLastModelEventMs=0,liveMicResumeAfterMs=0;
+std::atomic<bool> liveGenerationComplete{false},liveModelTurnActive{false};String state;
+void finishLivePcmInput(){}bool livePcmHasBufferedAudio(){return false;}
+void serverEvent(ChatHistory& chatHistory,const char* json){JsonDocument d;assert(!deserializeJson(d,json));JsonObjectConst serverContent=d["serverContent"];
+"""+transcripts+boundary+'\n}\n'
+source=stub+strip((root/'src/ai/ChatHistory.hpp').read_text())+strip((root/'src/ai/ChatHistory.cpp').read_text())+boundarySupport+r'''
 JsonDocument page(ChatHistory& h,unsigned before=0){JsonDocument d;assert(!deserializeJson(d,h.page(before)));return d;}
 void service(ChatHistory& h,int n=3){for(int i=0;i<n;++i){now+=101;h.service();}}
 void say(ChatHistory& h,const char* user,const char* model){h.transcript(false,user);h.transcript(true,model);h.finish();service(h);}
@@ -37,6 +48,10 @@ int main(){
  ChatHistory history;history.begin();assert(page(history)["storage"]=="sd");
  history.transcript(false,"Hello ");history.transcript(false,"world");history.transcript(true,"Hi!");history.finish();service(history);
  auto d=page(history);assert(d["count"]==2);assert(d["messages"][0]["text"]=="Hello world");assert(d["messages"][1]["role"]=="model");
+ // SD reader holds the history mutex while new transcript/finish events arrive.
+ historyLocked=true;history.transcript(false,"captured during SD read");history.finish();historyLocked=false;
+ assert(page(history)["incoming"]==2&&page(history)["dropped"]==0);service(history);assert(page(history)["count"]==3);
+ assert(history.requestReset());history.reset();say(history,"Hello world","Hi!");
  ChatHistory reboot;reboot.begin();assert(page(reboot)["count"]==2);assert(reboot.context().find("Hello world")!=std::string::npos);
  for(int i=0;i<6;++i)say(reboot,"Next question","Next answer");
  d=page(reboot);assert(d["long"]==true&&d["hasOlder"]==true);assert(d["messages"].size()==4);assert(page(reboot,d["before"].as<unsigned>())["messages"][0]["id"].as<int>()<d["messages"][0]["id"].as<int>());
@@ -56,7 +71,10 @@ int main(){
  assert(clearedBoot.requestReset());clearedBoot.reset();
  diskFull=true;say(clearedBoot,"q","a");d=page(clearedBoot);assert(d["pending"].as<int>()==2&&d["count"]==0);diskFull=false;service(clearedBoot);assert(page(clearedBoot)["count"]==2);
  // No SD is explicitly volatile and bounded; queue saturation reports drops.
- isConnectSDcard=false;ChatHistory ram;ram.begin();for(int i=0;i<12;++i){ram.transcript(false,"RAM only");ram.finish();}d=page(ram);assert(d["storage"]=="ram"&&d["count"]==8&&d["dropped"].as<int>()>0);assert(ram.requestReset());ram.reset();assert(page(ram)["count"]==0);
+ isConnectSDcard=false;ChatHistory ram;ram.begin();for(int i=0;i<12;++i){ram.transcript(false,"RAM only");ram.finish();}service(ram);d=page(ram);assert(d["storage"]=="ram"&&d["count"]==8&&d["dropped"].as<int>()>0);assert(ram.requestReset());ram.reset();assert(page(ram)["count"]==0);
+ isConnectSDcard=true;ChatHistory boundaryHistory;boundaryHistory.begin();boundaryHistory.requestReset();boundaryHistory.reset();
+ serverEvent(boundaryHistory,R"({"serverContent":{"inputTranscription":{"text":"question"},"outputTranscription":{"text":"answer"},"generationComplete":true}})");service(boundaryHistory);assert(page(boundaryHistory)["count"]==2);
+ serverEvent(boundaryHistory,R"({"serverContent":{"turnComplete":true}})");service(boundaryHistory);assert(page(boundaryHistory)["count"]==2);
  std::cout<<"PASS: transcript assembly, SD persistence, history seeding, pagination, long/full warnings, partials, UTF-8, disk failures, reset and bounded RAM\n";
 }
 '''

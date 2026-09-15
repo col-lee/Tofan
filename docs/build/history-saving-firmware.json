@@ -1,0 +1,15 @@
+﻿{
+    "flashed":  false,
+    "hardwareVerified":  false,
+    "firmware":  "D:\\PlatFormIO\\ToFan\\.pio\\build\\esp32-s3-devkitc-1-n16r8v\\firmware.bin",
+    "tests":  [
+                  "test_chat_history.py",
+                  "test_chat_protocol.py",
+                  "test_live_audio.py",
+                  "web/test/history.mjs"
+              ],
+    "change":  "Queue transcripts independently of SD locks, commit at generationComplete, expose capture diagnostics",
+    "built":  "2026-09-15T19:52:32.4815962+07:00",
+    "bytes":  2133216,
+    "sha256":  "BE0679106D7397F45775D158882F7A34A4A5F429F3915C583045BECF99FD430A"
+}

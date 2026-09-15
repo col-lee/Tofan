@@ -20,3 +20,13 @@ Memory replay is sent only for a new session, never in addition to a resumed ses
 Protocol references: [Gemini Live capabilities](https://ai.google.dev/gemini-api/docs/live-api/capabilities) and [Live API reference](https://ai.google.dev/api/live).
 
 Validation: native tests exercise production history code with simulated SD storage, reload, pagination, UTF-8 limits, capacity, write failures, reset, and RAM fallback. Protocol tests compile the production setup/replay blocks with a fake socket. Browser tests cover reading, escaped text, pagination, modal cancellation/confirmation, reset completion, reload, and mobile fit. Existing microphone and audio lifecycle regression tests pass. ESP32-S3 firmware builds successfully. Physical SD power-loss behavior and a real Gemini session still require testing on the device.
+
+## Saving reliability update
+
+Transcript reception previously waited only 5 ms for the same mutex held by SD writes and history reads. A slow SD operation could therefore discard incoming text. Reception and completion markers now enter a separate bounded queue (16 PSRAM-preferred event payloads); the application worker assembles them in order and performs the existing archive writes. Overflow/allocation failures still increment `dropped`. Reset drains both queues after the Live worker stops.
+
+`generationComplete` now also commits assembled text instead of waiting solely for `turnComplete` (which can be delayed until playback finishes). A subsequent completion with no new text does not duplicate records. The sender still requests input/output transcriptions explicitly. Folder creation is retried when saving, so a transient initial directory failure can recover.
+
+The web history panel now reports `receivedChunks`, `incoming`, and `assemblingBytes` alongside saved message count and pending writes. These capture counters start at boot/reset. If the received count remains zero after speaking, inspect Gemini transcription delivery/provider configuration. If it increases but saved count stays zero, inspect SD/RAM storage mode, pending writes, and the displayed error. This instrumentation distinguishes the failure stage; it does not claim a hardware diagnosis without device status.
+
+The native test now simulates a held history mutex during reception and checks that text is queued and saved afterward. It also runs the production generation/turn completion blocks, verifying early persistence and no duplicate records. See the [server-content transcription and completion definitions](https://ai.google.dev/api/live#bidigeneratecontentservercontent).

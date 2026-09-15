@@ -10,10 +10,11 @@ export function historyWarnings(s){
 }
 export function mountHistory({root,api,ask,notice}){
  let current=null,dialog=null,cursor=0,loading=false,resetting=false,stack=[],pageRequest=0;
- root.innerHTML=`<section class="panel history-panel"><span class="badge">CONVERSATION MEMORY</span><h2>ประวัติและความจำ</h2><p class="hint">บันทึกข้อความถอดเสียง Gemini Live ลง SD และนำบทสนทนาล่าสุดกลับไปใช้เมื่อเชื่อมต่อใหม่</p><p id="historyStats" role="status">กำลังอ่านสถานะ…</p><progress id="historyCapacity" max="1048576" value="0" aria-label="พื้นที่ประวัติแชท"></progress><div id="historyWarnings" class="history-warning" role="status" hidden></div><div class="row"><button id="readHistory"><i class="fa-solid fa-comments" aria-hidden="true"></i> อ่านประวัติ / จัดการ</button><button id="resetHistory"><i class="fa-solid fa-trash" aria-hidden="true"></i> รีเซ็ตประวัติ</button></div></section>`;
+ root.innerHTML=`<section class="panel history-panel"><span class="badge">CONVERSATION MEMORY</span><h2>ประวัติและความจำ</h2><p class="hint">บันทึกข้อความถอดเสียง Gemini Live ลง SD และนำบทสนทนาล่าสุดกลับไปใช้เมื่อเชื่อมต่อใหม่</p><p id="historyStats" role="status">กำลังอ่านสถานะ…</p><progress id="historyCapacity" max="1048576" value="0" aria-label="พื้นที่ประวัติแชท"></progress><p id="historyCapture" class="hint" role="status"></p><div id="historyWarnings" class="history-warning" role="status" hidden></div><div class="row"><button id="readHistory"><i class="fa-solid fa-comments" aria-hidden="true"></i> อ่านประวัติ / จัดการ</button><button id="resetHistory"><i class="fa-solid fa-trash" aria-hidden="true"></i> รีเซ็ตประวัติ</button></div></section>`;
  const $=s=>root.querySelector(s);
  const status=s=>{
   current=s;$('#historyStats').textContent=s.resetting?'กำลังหยุดบทสนทนาและล้างประวัติ…':`${s.count||0} ข้อความ · ${s.storage==='sd'?'SD card':'RAM ชั่วคราว'} · ${Math.ceil((s.bytes||0)/1024)} / ${Math.ceil((s.maxBytes||1048576)/1024)} KiB${s.pending?` · รอบันทึก ${s.pending} ข้อความ`:''}`;
+  $('#historyCapture').textContent=`รับข้อความถอดเสียงแล้ว ${s.receivedChunks||0} ชุด · รอประมวลผล ${s.incoming||0} ชุด · ข้อความรอจบรอบ ${s.assemblingBytes||0} ไบต์`;
   $('#historyCapacity').value=s.bytes||0;$('#historyCapacity').max=s.maxBytes||1048576;
   const warnings=historyWarnings(s),box=$('#historyWarnings');box.replaceChildren();box.hidden=!warnings.length;
   warnings.forEach(w=>{const p=document.createElement('p');p.textContent=w;box.append(p);});
