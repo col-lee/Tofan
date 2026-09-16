@@ -12,6 +12,8 @@ app = (ROOT / "src/app/Application.cpp").read_text(encoding="utf-8")
 coordinator = (ROOT / "src/app/AppCoordinator.cpp").read_text(encoding="utf-8")
 input_controller = (ROOT / "src/app/InputController.cpp").read_text(encoding="utf-8")
 audio_h = (ROOT / "src/audio/SoundManager.hpp").read_text(encoding="utf-8")
+compact_chat_h = "".join(chat_h.split())
+compact_chat = "".join(chat.split())
 
 checks = {
     "Gemini setup requests session resumption": 'setup["sessionResumption"]' in ai,
@@ -22,7 +24,7 @@ checks = {
     "AI config request body has a bounded size": 'AI_CONFIG_BODY_MAX_BYTES' in ai,
     "Live mic partial allocation has cleanup": 'releaseLiveMicStorage()' in audio,
     "Live PCM partial allocation has cleanup": 'releaseLivePcmStorage()' in audio,
-    "I2S playback accounts for actual bytes written": 'writtenSamples = writtenBytes / sizeof(uint32_t)' in audio,
+    "I2S playback accounts for actual bytes written": 'writtenFrames = writtenBytes / sizeof(uint32_t)' in audio and 'completed += min(writtenFrames' in audio,
     "I2S playback no longer blindly advances a full batch": 'done += batch;' not in audio,
     "Gemini speaker queue gets a bounded wait longer than one PCM block": 'pdMS_TO_TICKS(250)' in ai,
     "Per-frame GIF Serial spam removed": 'DRAWING 1 FRAME' not in media,
@@ -37,7 +39,7 @@ checks = {
     "Gemini generation completion releases short replies from prebuffer": 'finishLivePcmInput();' in ai and 'generationComplete' in ai,
     "Gemini speaker exposes buffering and underrun diagnostics": 'speakerBuffering' in ai and 'speakerUnderruns' in ai and 'speakerBufferedMs' in ai,
 
-    "Chat history reserves ingress slots for turn boundaries": 'FinishReserve=2' in chat_h and 'uxQueueMessagesWaiting(incomingFree)<=chat::FinishReserve' in chat,
+    "Chat history reserves ingress slots for turn boundaries": 'FinishReserve=2' in compact_chat_h and 'uxQueueMessagesWaiting(incomingFree)<=chat::FinishReserve' in compact_chat,
     "Chat history exposes dropped turn-boundary diagnostics": 'boundaryDrops' in chat_h and 'd["boundaryDrops"]' in chat,
     "Normal Gemini turn uses one atomic history boundary": 'chatHistory.finish();' in ai,
     "Gemini generationComplete does not prematurely commit history": 'Do not commit chat history here' in ai and 'if (serverContent["generationComplete"]' in ai,

@@ -3,9 +3,11 @@
 #include "RecordingPath.hpp"
 #include "PlaybackEvents.hpp"
 #include "VoiceEnvelope.hpp"
+#include "PcmBatch.hpp"
 #include "../core/UserSettings.hpp"
 #include <atomic>
 #include <esp_heap_caps.h>
+#include <esp_timer.h>
 #include "../display/DisplayManager.hpp"
 #include "../storage/FileManager.hpp"
 #include "../network/Network.hpp"
@@ -20,6 +22,93 @@ static uint32_t musicLastService = 0;
 static bool musicBufferPrimed = false;
 static constexpr uint32_t MUSIC_REFILL_LOW_WATER_BYTES = 96 * 1024;
 static constexpr uint32_t MUSIC_CRITICAL_BUFFER_BYTES = 32 * 1024;
+
+// ESP32-audioI2S 2.x submits one 32-bit stereo frame per i2s_write() call.
+// At 44.1 kHz that means 44,100 driver/semaphore calls per second. Intercept
+// the library's post-gain callback and submit short DMA-friendly batches.
+// 128 frames add at most 2.9 ms latency at 44.1 kHz while reducing driver
+// calls by up to 128x. Gemini PCM already arrives in batches and uses the same
+// measured write helper directly.
+static constexpr size_t SPEAKER_I2S_BATCH_FRAMES = 128;
+static constexpr uint8_t SPEAKER_I2S_MAX_STALLS = 10;
+static PcmBatch<SPEAKER_I2S_BATCH_FRAMES> musicOutputBatch;
+static std::atomic<uint32_t> speakerI2sWrites{0}, speakerI2sStalls{0};
+static std::atomic<uint32_t> speakerI2sDroppedFrames{0}, speakerI2sMaxWriteUs{0};
+
+uint32_t getSpeakerI2sWrites(){return speakerI2sWrites.load();}
+uint32_t getSpeakerI2sStalls(){return speakerI2sStalls.load();}
+uint32_t getSpeakerI2sDroppedFrames(){return speakerI2sDroppedFrames.load();}
+uint32_t getSpeakerI2sMaxWriteUs(){return speakerI2sMaxWriteUs.load();}
+
+static void observeSpeakerWriteDuration(uint32_t elapsedUs) {
+    uint32_t maximum = speakerI2sMaxWriteUs.load();
+    while (elapsedUs > maximum &&
+           !speakerI2sMaxWriteUs.compare_exchange_weak(maximum, elapsedUs)) {}
+}
+
+static size_t writeSpeakerFrames(const uint32_t* frames, size_t frameCount, TickType_t timeout) {
+    if (!frames || frameCount == 0 || !isAudio_install) return 0;
+
+    size_t completed = 0;
+    uint8_t stalledWrites = 0;
+    while (completed < frameCount) {
+        size_t writtenBytes = 0;
+        const int64_t startedUs = esp_timer_get_time();
+        const esp_err_t result = i2s_write(
+            static_cast<i2s_port_t>(audio.getI2sPort()),
+            frames + completed,
+            (frameCount - completed) * sizeof(uint32_t),
+            &writtenBytes,
+            timeout);
+        const int64_t elapsedUs = esp_timer_get_time() - startedUs;
+        observeSpeakerWriteDuration(elapsedUs > 0 ? static_cast<uint32_t>(elapsedUs) : 0);
+        speakerI2sWrites.fetch_add(1);
+
+        const size_t writtenFrames = writtenBytes / sizeof(uint32_t);
+        if (writtenFrames > 0) {
+            completed += min(writtenFrames, frameCount - completed);
+            stalledWrites = 0;
+            continue;
+        }
+
+        speakerI2sStalls.fetch_add(1);
+        // A transient timeout/driver error can clear on the next DMA slot. Keep
+        // the established bounded retry behavior for both ESP_OK/zero-progress
+        // and explicit errors; only the retry ceiling is allowed to drop PCM.
+        (void)result;
+        if (++stalledWrites >= SPEAKER_I2S_MAX_STALLS) break;
+        vTaskDelay(pdMS_TO_TICKS(1));
+    }
+
+    return completed;
+}
+
+static void clearMusicOutputBatch() {
+    musicOutputBatch.clear();
+}
+
+static void flushMusicOutputBatch() {
+    if (musicOutputBatch.empty()) return;
+    const size_t requested = musicOutputBatch.size();
+    const size_t written = writeSpeakerFrames(musicOutputBatch.data(), requested, pdMS_TO_TICKS(20));
+    if (written < requested) {
+        speakerI2sDroppedFrames.fetch_add(static_cast<uint32_t>(requested - written));
+    }
+    musicOutputBatch.clear();
+}
+
+// AudioBatchBridge calls this after ESP32-audioI2S has decoded, filtered and
+// applied gain. It only runs from handleAudio, so the fixed buffer needs no
+// cross-task lock.
+void batchDecodedMusicFrame(uint32_t sample) {
+    if (!musicOutputBatch.push(sample)) {
+        speakerI2sDroppedFrames.fetch_add(1);
+        return;
+    }
+    if (musicOutputBatch.full()) {
+        flushMusicOutputBatch();
+    }
+}
 
 uint32_t getMusicSdWaits(){return musicSdWaits.load();}
 uint32_t getMusicMaxServiceGapMs(){return musicMaxServiceGap.load();}
@@ -62,7 +151,12 @@ static void serviceMusic(){
         while(gap>maximum && !musicMaxServiceGap.compare_exchange_weak(maximum,gap)){}
     }
     musicLastService=now;
+    const bool wasRunning = audio.isRunning();
     audio.loop();
+    // Codec frame sizes are not guaranteed to be a multiple of our DMA batch.
+    // Preserve the final <=127 frames on a natural EOF; explicit pause/stop/
+    // seek transitions clear the staging buffer before changing source state.
+    if (wasRunning && !audio.isRunning()) flushMusicOutputBatch();
     observeMusicBuffer();
 }
 static VoiceEnvelope microphoneEnvelope, liveSpeechEnvelope;
@@ -419,6 +513,7 @@ void initAudio(){
   } else {
     Serial.println("install audio failed.");
   }
+  clearMusicOutputBatch();
   setOutputVolume(userSettings.values.volume);
   audio.setVolume(preferences::hardwareVolume(userSettings.values.volume));
   if (!ensureLivePcmStorage()) Serial.println("[AUDIO] Unable to allocate Gemini Live PCM queue");
@@ -853,6 +948,7 @@ void handleAudio(void *parameter) {
 
     if (livePcmEnabled.load()) {
       if (!liveOutputConfigured) {
+        clearMusicOutputBatch();
         audio.stopSong();
         currentState = STATE_STOPPED;
         isPlayingAudio = false;
@@ -911,31 +1007,23 @@ void handleAudio(void *parameter) {
             liveStereoScratch[i] = (static_cast<uint32_t>(sample) << 16) | sample;
           }
           size_t batchDone = 0;
-          uint8_t stalledWrites = 0;
           while (batchDone < batch && livePcmEnabled.load() && playbackEpoch == livePcmEpoch.load()) {
-            size_t writtenBytes = 0;
-            const esp_err_t writeResult = i2s_write(
-                static_cast<i2s_port_t>(audio.getI2sPort()),
-                liveStereoScratch + batchDone,
-                (batch - batchDone) * sizeof(uint32_t),
-                &writtenBytes,
-                pdMS_TO_TICKS(50));
-            const size_t writtenSamples = writtenBytes / sizeof(uint32_t);
+            const size_t requestedFrames = batch - batchDone;
+            const size_t writtenSamples = writeSpeakerFrames(
+                liveStereoScratch + batchDone, requestedFrames, pdMS_TO_TICKS(50));
             if (writtenSamples > 0) {
               // Meter only samples accepted by I2S, not fast-arriving network
               // chunks. This keeps the face aligned with local playback.
               liveSpeechEnvelope.push(mono + done + batchDone, writtenSamples, millis(), percent / 2);
               batchDone += writtenSamples;
-              stalledWrites = 0;
-              continue;
             }
-            if (++stalledWrites >= 10) {
-              Serial.printf("[GEMINI] I2S write stalled/failed after retries (err=%d); dropping %u samples from current block\n",
-                            static_cast<int>(writeResult),
-                            static_cast<unsigned>(batch - batchDone));
+            if (writtenSamples < requestedFrames) {
+              const size_t dropped = requestedFrames - writtenSamples;
+              speakerI2sDroppedFrames.fetch_add(static_cast<uint32_t>(dropped));
+              Serial.printf("[GEMINI] I2S write stalled; dropping %u samples from current block\n",
+                            static_cast<unsigned>(dropped));
               break;
             }
-            vTaskDelay(pdMS_TO_TICKS(1));
           }
           done += batchDone;
           if (batchDone < batch) break;
@@ -984,6 +1072,7 @@ void handleAudio(void *parameter) {
         switch (cmd.audio_state) {
           case AUDIO_COMMAND::AUDIO_STATE::PLAY: {
             bool connected = false;
+            clearMusicOutputBatch();
             musicLastService=0;
             musicSdWaits.store(0);
             musicMaxServiceGap.store(0);
@@ -1047,6 +1136,7 @@ void handleAudio(void *parameter) {
 
           case AUDIO_COMMAND::AUDIO_STATE::PUASE:
             if(currentState == STATE_PLAYING) {
+              clearMusicOutputBatch();
               audio.pauseResume();
               currentState = STATE_PAUSED;
               hasPausedAudio = true;
@@ -1056,6 +1146,7 @@ void handleAudio(void *parameter) {
             break;
 
           case AUDIO_COMMAND::AUDIO_STATE::SEEK:
+            clearMusicOutputBatch();
             audio.audioFileSeek(cmd.seek_time);
             currentState = STATE_PLAYING;
             isPlayingAudio = true;
@@ -1063,6 +1154,7 @@ void handleAudio(void *parameter) {
             break;
 
           case AUDIO_COMMAND::AUDIO_STATE::STOP:
+            clearMusicOutputBatch();
             audio.stopSong();
             hasPausedAudio = false;
             currentState = STATE_STOPPED;

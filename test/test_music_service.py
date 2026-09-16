@@ -6,7 +6,11 @@ web=(root/'src/network/WebPortal.cpp').read_text(encoding='utf8')
 start=web.index('    static uint64_t storageTotal=0,storageUsed=0;')
 logic=web[start:web.index('    d["musicSdWaits"]',start)]
 audio=(root/'src/audio/SoundManager.cpp').read_text(encoding='utf8')
-service=audio[audio.index('static std::atomic<uint32_t> musicSdWaits'):audio.index('static VoiceEnvelope')]
+metrics_start=audio.index('static std::atomic<uint32_t> musicSdWaits')
+speaker_start=audio.index('// ESP32-audioI2S 2.x submits')
+music_logic_start=audio.index('uint32_t getMusicSdWaits')
+service=(audio[metrics_start:speaker_start]
+         + audio[music_logic_start:audio.index('static VoiceEnvelope')])
 stub=r'''
 #include <ArduinoJson.h>
 #include <atomic>
@@ -17,7 +21,8 @@ struct SerialStub{template<class... T> void printf(const char*,T...){}} Serial;
 bool isConnectSDcard=true,isPlayingAudio=false;uint32_t getSdSpiFrequencyHz(){return 20000000;}namespace app{struct {bool isRecordingMode=false;} runtime;}
 int sdSemaphore=1;struct Guard{bool held=true;Guard(int){}};
 struct {int queries=0;uint64_t totalBytes(){++queries;return 100000;}uint64_t usedBytes(){++queries;return 40000;}} SD;
-struct {int calls=0;uint32_t filled=200000;void loop(){++calls;}uint32_t inBufferFilled(){return filled;}} audio;
+void flushMusicOutputBatch(){}
+struct {int calls=0;uint32_t filled=200000;bool running=true;void loop(){++calls;}bool isRunning(){return running;}uint32_t inBufferFilled(){return filled;}} audio;
 '''
 code=stub+service+'\nJsonDocument poll(){JsonDocument d;'+logic+'return d;}\n'+r'''
 int main(){

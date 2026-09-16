@@ -89,3 +89,7 @@ uint32_t getMusicMaxServiceGapMs();
 uint32_t getMusicInputBufferBytes();
 uint32_t getMusicMinInputBufferBytes();
 uint32_t getMusicLowBufferEvents();
+uint32_t getSpeakerI2sWrites();
+uint32_t getSpeakerI2sStalls();
+uint32_t getSpeakerI2sDroppedFrames();
+uint32_t getSpeakerI2sMaxWriteUs();

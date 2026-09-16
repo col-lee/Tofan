@@ -526,6 +526,10 @@ void serviceWebPortal() {
     d["musicInputBufferBytes"]=getMusicInputBufferBytes();
     d["musicMinInputBufferBytes"]=getMusicMinInputBufferBytes();
     d["musicLowBufferEvents"]=getMusicLowBufferEvents();
+    d["speakerI2sWrites"]=getSpeakerI2sWrites();
+    d["speakerI2sStalls"]=getSpeakerI2sStalls();
+    d["speakerI2sDroppedFrames"]=getSpeakerI2sDroppedFrames();
+    d["speakerI2sMaxWriteUs"]=getSpeakerI2sMaxWriteUs();
     d["playing"]=isPlayingAudio;d["title"]=getCurrentSongTitle();d["current"]=currentAudioTime;d["duration"]=totalAudioDuration;d["recording"]=app::runtime.isRecording;d["busy"]=transfer.load();
     {Guard g(portalMutex);if(g.held){d["audioImportState"]=audioImportState;d["audioImportError"]=audioImportError;d["audioImportDone"]=audioImportDone;d["audioImportTotal"]=audioImportTotal;}}
     auto custom=d["customPet"].to<JsonObject>();const auto& cp=userSettings.customPet;
