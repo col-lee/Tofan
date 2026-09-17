@@ -21,7 +21,7 @@ namespace espnow
         };
         struct Command
         {
-            bool config = false;
+            bool config = false, raw = false;
             char json[1537]{};
             uint8_t mac[6]{}, payload[MaxPayload]{};
             uint16_t length = 0;
@@ -38,12 +38,14 @@ namespace espnow
         StaticQueue_t commandControl, eventControl;
         SemaphoreHandle_t mutex = nullptr;
         Summary state;
-        String error;
-        uint32_t revision = 0, sequence = 0, lastPing = 0;
+        String error, configError, sendError;
+        uint32_t revision = 0, configRevision = 0, sendRevision = 0;
+        uint32_t sequence = 0, lastPing = 0;
         size_t pingIndex = 0;
         std::atomic<int> txResult{-1};
         std::atomic<uint32_t> dropped{0};
         std::atomic<Receiver> receiver{nullptr};
+        std::atomic<TextReceiver> textReceiver{nullptr};
         bool busy = false;
         uint8_t sending[6]{};
         uint32_t sentAt = 0;
@@ -72,7 +74,7 @@ namespace espnow
         }
         void receive(const uint8_t *mac, const uint8_t *data, int len)
         {
-            if (!events || !mac || !data || len < int(Header) || len > int(Header + MaxPayload))
+            if (!events || !mac || !data || len <= 0 || len > int(Header + MaxPayload))
                 return;
             Event e{};
             memcpy(e.mac, mac, 6);
@@ -102,19 +104,22 @@ namespace espnow
             if (events)
                 xQueueReset(events);
         }
-        bool transmit(int i, Type type, const uint8_t *data, size_t len, uint32_t seq)
+        bool transmit(int i, Type type, const uint8_t *data, size_t len, uint32_t seq, bool raw = false)
         {
             if (busy || !state.ready || i < 0 || !peers[i].enabled || !peers[i].registered)
                 return false;
             uint8_t wire[Header + MaxPayload];
-            size_t n = encode(wire, type, seq, data, len);
+            const uint8_t *out = wire;
+            size_t n = raw ? len : encode(wire, type, seq, data, len);
+            if (raw)
+                out = data;
             if (!n)
                 return false;
             memcpy(sending, peers[i].mac, 6);
             txResult = -1;
             busy = true;
             sentAt = millis();
-            esp_err_t result = esp_now_send(sending, wire, n);
+            esp_err_t result = esp_now_send(sending, out, n);
             if (result != ESP_OK)
             {
                 busy = false;
@@ -128,9 +133,26 @@ namespace espnow
         bool loadConfig(const String &text, bool save)
         {
             JsonDocument d(memory::jsonAllocator());
-            if (deserializeJson(d, text) || !d["enabled"].is<bool>() || !d["peers"].is<JsonArray>() || d["peers"].size() > MaxPeers)
+            DeserializationError parseError = deserializeJson(d, text);
+            if (parseError)
             {
-                error = "Invalid ESP-NOW configuration";
+                error = "Invalid ESP-NOW configuration: ";
+                error += parseError.c_str();
+                return false;
+            }
+            if (!d["enabled"].is<bool>())
+            {
+                error = "Invalid ESP-NOW configuration: enabled must be boolean";
+                return false;
+            }
+            if (!d["peers"].is<JsonArray>())
+            {
+                error = "Invalid ESP-NOW configuration: peers must be an array";
+                return false;
+            }
+            if (d["peers"].size() > MaxPeers)
+            {
+                error = "Invalid ESP-NOW configuration: maximum 8 peers";
                 return false;
             }
             Peer *next = candidate;
@@ -203,7 +225,10 @@ namespace espnow
             String saved = p.getString("config", "");
             p.end();
             if (saved.length())
+            {
                 loadConfig(saved, false);
+                configError = error;
+            }
         }
     }
     void beforeWifiChange()
@@ -214,7 +239,7 @@ namespace espnow
     }
     bool submitConfig(const String &json)
     {
-        if (!commands || json.length() > 1536)
+        if (!commands || json.length() == 0 || json.length() > 1536)
             return false;
         Command c;
         c.config = true;
@@ -232,7 +257,37 @@ namespace espnow
         c.length = length;
         return xQueueSend(commands, &c, 0) == pdTRUE;
     }
+    bool sendRaw(const uint8_t address[6], const uint8_t *data, size_t length)
+    {
+        if (!commands || !address || !data || !length || length > MaxPayload)
+            return false;
+        Command c;
+        c.raw = true;
+        memcpy(c.mac, address, 6);
+        memcpy(c.payload, data, length);
+        c.length = length;
+        return xQueueSend(commands, &c, 0) == pdTRUE;
+    }
+    bool sendText(const uint8_t address[6], const char *text)
+    {
+        if (!text)
+            return false;
+        const size_t length = strlen(text);
+        if (!length || length > MaxPayload)
+            return false;
+        return sendRaw(address, reinterpret_cast<const uint8_t *>(text), length);
+    }
+
+    bool sendText(const uint8_t address[6], const String &text)
+    {
+        const size_t length = text.length();
+        if (!length || length > MaxPayload)
+            return false;
+        return sendRaw(address, reinterpret_cast<const uint8_t *>(text.c_str()), length);
+    }
+
     void setReceiver(Receiver callback) { receiver.store(callback); }
+    void setTextReceiver(TextReceiver callback) { textReceiver.store(callback); }
     void service()
     {
         Guard g;
@@ -270,15 +325,19 @@ namespace espnow
                 if (c.config)
                 {
                     loadConfig(c.json, true);
+                    configError = error;
                     ++revision;
+                    ++configRevision;
                 }
                 else
                 {
                     error = "";
                     int i = find(c.mac);
-                    if (!transmit(i, Data, c.payload, c.length, ++sequence))
+                    if (!transmit(i, Data, c.payload, c.length, ++sequence, c.raw) && !error.length())
                         error = "Cannot send: enable ESP-NOW and a registered peer";
+                    sendError = error;
                     ++revision;
+                    ++sendRevision;
                 }
             }
         }
@@ -320,11 +379,25 @@ namespace espnow
         for (int n = 0; n < 4 && xQueueReceive(events, &e, 0) == pdTRUE; ++n)
         {
             int i = find(e.mac);
-            Type type;
+            Type type = Data;
             uint32_t seq;
             size_t len;
-            if (i < 0 || !peers[i].enabled || !decode(e.wire, e.length, type, seq, len))
+            if (i < 0 || !peers[i].enabled)
                 continue;
+            const bool framed = decode(e.wire, e.length, type, seq, len);
+            if (!framed)
+            {
+                if (!e.length || e.length > MaxPayload)
+                    continue;
+                // A packet claiming the ToFan magic must pass protocol validation;
+                // do not reinterpret a corrupt/version-mismatched frame as raw text.
+                if (e.length >= 2 && e.wire[0] == 'T' && e.wire[1] == 'F')
+                    continue;
+                type = Data;
+                seq = 0;
+                len = e.length;
+            }
+            const uint8_t *payload = e.wire + (framed ? Header : 0);
             auto &p = peers[i];
             p.seen = true;
             p.last = millis();
@@ -335,14 +408,33 @@ namespace espnow
             if (type == Data)
             {
                 for (size_t j = 0; j < len; ++j)
-                    snprintf(p.latest + j * 2, 3, "%02X", e.wire[Header + j]);
+                    snprintf(p.latest + j * 2, 3, "%02X", payload[j]);
                 p.latest[len * 2] = 0;
-                // Invoke the application outside the state mutex (it may enqueue a reply).
+                // Invoke application callbacks outside the state mutex
+                // because they may enqueue a reply back through sendPacket()/sendText().
                 Receiver cb = receiver.load();
-                if (cb)
+                TextReceiver textCb = textReceiver.load();
+
+                if (cb || textCb)
                 {
+                    // Data payloads are raw bytes on the wire.  For the text callback
+                    // make a bounded NUL-terminated copy while preserving the byte length.
+                    char text[MaxPayload + 1];
+                    if (textCb)
+                    {
+                        if (len)
+                            memcpy(text, payload, len);
+                        text[len] = '\0';
+                    }
+
                     xSemaphoreGive(mutex);
-                    cb(e.mac, e.wire + Header, len);
+
+                    if (cb)
+                        cb(e.mac, payload, len);
+
+                    if (textCb)
+                        textCb(e.mac, text, len);
+
                     xSemaphoreTake(mutex, portMAX_DELAY);
                 }
             }
@@ -381,7 +473,11 @@ namespace espnow
             d["ready"] = state.ready;
             d["channel"] = state.channel;
             d["revision"] = revision;
+            d["configRevision"] = configRevision;
+            d["sendRevision"] = sendRevision;
             d["error"] = error;
+            d["configError"] = configError;
+            d["sendError"] = sendError;
             d["dropped"] = dropped.load();
             d["maxPayload"] = MaxPayload;
             auto rows = d["peers"].to<JsonArray>();

@@ -9,7 +9,7 @@ struct Received {uint16_t length;uint8_t wire[espnow::Header+espnow::MaxPayload]
 QueueHandle_t received;
 uint32_t sequence=0;
 void onReceive(const uint8_t* mac,const uint8_t* data,int length){
- if(memcmp(mac,masterMac,6)||length<int(espnow::Header)||length>int(sizeof(Received::wire)))return;
+ if(memcmp(mac,masterMac,6)||length<=0||length>int(sizeof(Received::wire)))return;
  Received packet{};packet.length=length;memcpy(packet.wire,data,length);xQueueSend(received,&packet,0);
 }
 bool sendDataToMaster(const uint8_t* payload,size_t length){
@@ -27,12 +27,17 @@ void setup(){
 void loop(){
  Received packet;if(received&&xQueueReceive(received,&packet,pdMS_TO_TICKS(20))==pdTRUE){
   espnow::Type type;uint32_t seq;size_t length;
-  if(!espnow::decode(packet.wire,packet.length,type,seq,length))return;
-  if(type==espnow::Ping){uint8_t pong[espnow::Header];size_t n=espnow::encode(pong,espnow::Pong,seq,nullptr,0);esp_now_send(masterMac,pong,n);}
-  else if(type==espnow::Data){
+  if(espnow::decode(packet.wire,packet.length,type,seq,length)){
+   if(type==espnow::Ping){uint8_t pong[espnow::Header];size_t n=espnow::encode(pong,espnow::Pong,seq,nullptr,0);esp_now_send(masterMac,pong,n);}
+   else if(type==espnow::Data){
    Serial.printf("Data #%u (%u bytes): ",seq,unsigned(length));for(size_t i=0;i<length;++i)Serial.printf("%02X",packet.wire[espnow::Header+i]);Serial.println();
+   Serial.print("Text (UTF-8): ");Serial.write(packet.wire+espnow::Header,length);Serial.println();
    // Demo: echo the payload back as Data. Replace this with your application.
    sendDataToMaster(packet.wire+espnow::Header,length);
+   }
+  }else if(packet.length<=espnow::MaxPayload){
+   Serial.print("Raw text: ");Serial.write(packet.wire,packet.length);Serial.println();
+   esp_now_send(masterMac,packet.wire,packet.length); // raw echo for the web test
   }
  }else delay(1);
 }

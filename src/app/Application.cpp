@@ -21,6 +21,22 @@
 #include "InputController.hpp"
 #include "../core/GlobalState.hpp"
 
+    static void printMac(const uint8_t mac[6])
+    {
+        Serial.printf("%02X:%02X:%02X:%02X:%02X:%02X",
+                      mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+    }
+    static void onEspNowText(const uint8_t mac[6], const char *text, size_t length)
+    {
+        Serial.print("[MASTER RX TEXT] from ");
+        printMac(mac);
+        Serial.printf(" | bytes=%u | ", static_cast<unsigned>(length));
+        Serial.println(text);
+
+        // Optional reply example:
+        // espnow::sendText(mac, "Message received by Master");
+    }
+
 static bool initializeSystem() {
     Serial.begin(115200);
     Serial.println("start...");
@@ -48,6 +64,10 @@ static bool initializeSystem() {
     file_card.initSDCard();
     chatHistory.begin();
     espnow::begin();
+
+    espnow::setTextReceiver(
+        onEspNowText
+    );
     vTaskDelay(pdMS_TO_TICKS(200));
 
     initAudio();

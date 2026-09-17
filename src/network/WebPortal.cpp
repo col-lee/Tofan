@@ -389,9 +389,40 @@ void registerWebPortal(AsyncWebServer& server) {
         JsonDocument d(memory::jsonAllocator());d["ssid"]=ssid;d["password"]=pass;String out;serializeJson(d,out);enqueue(r,Command::Wifi,out);
     });
     server.on("/api/ai",AsyncWebRequestMethod::HTTP_POST,[](AsyncWebServerRequest* r){if(authorized(r,true))enqueue(r,Command::AI,param(r,"values"));});
-    server.on("/api/espnow",AsyncWebRequestMethod::HTTP_GET,[](AsyncWebServerRequest* r){if(!authorized(r))return;auto* response=r->beginResponse(200,"application/json",espnow::status());response->addHeader("Cache-Control","no-store");r->send(response);});
-    server.on("/api/espnow",AsyncWebRequestMethod::HTTP_POST,[](AsyncWebServerRequest* r){if(!authorized(r,true))return;if(webFirmwareUpdating()){reply(r,409,"Firmware update in progress");return;}if(!espnow::submitConfig(param(r,"values"))){reply(r,409,"Configuration too large or queue full");return;}reply(r,202,"ESP-NOW settings queued",true);});
-    server.on("/api/espnow/send",AsyncWebRequestMethod::HTTP_POST,[](AsyncWebServerRequest* r){if(!authorized(r,true))return;if(webFirmwareUpdating()){reply(r,409,"Firmware update in progress");return;}uint8_t mac[6],payload[espnow::MaxPayload];String hex=param(r,"hex");if(!espnow::mac(param(r,"mac").c_str(),mac)||hex.length()%2||hex.length()>espnow::MaxPayload*2){reply(r,400,"Invalid MAC or payload (max 200 bytes)");return;}for(size_t i=0;i<hex.length();i+=2){int a=espnow::hex(hex[i]),b=espnow::hex(hex[i+1]);if(a<0||b<0){reply(r,400,"Payload must be hexadecimal");return;}payload[i/2]=(a<<4)|b;}if(!espnow::sendPacket(mac,payload,hex.length()/2)){reply(r,409,"Send queue full");return;}reply(r,202,"Packet queued; check TX/RX status",true);});
+    server.on(AsyncURIMatcher::exact("/api/espnow"),AsyncWebRequestMethod::HTTP_GET,[](AsyncWebServerRequest* r){if(!authorized(r))return;auto* response=r->beginResponse(200,"application/json",espnow::status());response->addHeader("Cache-Control","no-store");r->send(response);});
+    server.on(AsyncURIMatcher::exact("/api/espnow"),AsyncWebRequestMethod::HTTP_POST,[](AsyncWebServerRequest* r){
+        if(!authorized(r,true))return;
+        if(webFirmwareUpdating()){reply(r,409,"Firmware update in progress");return;}
+        String values=param(r,"values");
+        if(values.isEmpty()){reply(r,400,"Missing ESP-NOW configuration");return;}
+        if(!espnow::submitConfig(values)){reply(r,409,"Configuration too large or queue full");return;}
+        reply(r,202,"ESP-NOW settings queued",true);
+    });
+    server.on(AsyncURIMatcher::exact("/api/espnow/send"),AsyncWebRequestMethod::HTTP_POST,[](AsyncWebServerRequest* r){
+        if(!authorized(r,true))return;
+        if(webFirmwareUpdating()){reply(r,409,"Firmware update in progress");return;}
+        uint8_t mac[6];
+        if(!espnow::mac(param(r,"mac").c_str(),mac)){reply(r,400,"Invalid peer MAC");return;}
+
+        bool queued=false;
+        if(r->hasParam("text",true)){
+            String text=param(r,"text");
+            if(text.isEmpty()||text.length()>espnow::MaxPayload){reply(r,400,"Text must be 1-200 UTF-8 bytes");return;}
+            queued=espnow::sendText(mac,text);
+        }else{
+            uint8_t payload[espnow::MaxPayload];String hex=param(r,"hex");
+            if(hex.length()%2||hex.length()>espnow::MaxPayload*2){reply(r,400,"Invalid hexadecimal payload (max 200 bytes)");return;}
+            for(size_t i=0;i<hex.length();i+=2){
+                int a=espnow::hex(hex[i]),b=espnow::hex(hex[i+1]);
+                if(a<0||b<0){reply(r,400,"Payload must be hexadecimal");return;}
+                payload[i/2]=(a<<4)|b;
+            }
+            queued=espnow::sendPacket(mac,payload,hex.length()/2);
+        }
+        if(!queued){reply(r,409,"ESP-NOW send queue full or unavailable");return;}
+        reply(r,202,"Packet queued; check TX/RX status",true);
+    });
+
     server.on("/api/history",AsyncWebRequestMethod::HTTP_GET,[](AsyncWebServerRequest* r){
         if(!authorized(r))return;String before=param(r,"before",false);
         for(size_t i=0;i<before.length();++i)if(before[i]<'0'||before[i]>'9'){reply(r,400,"Invalid history cursor");return;}
